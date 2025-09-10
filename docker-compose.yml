@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8002:8002"
+      - "8000:8000"
     volumes:
       - ./:/app
       - hf_cache:/hf_cache
@@ -15,7 +15,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -27,7 +27,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8001:8001"
+      - "8002:8002"
     deploy:
       resources:
         reservations:
@@ -35,7 +35,7 @@ services:
             - capabilities: ["gpu"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/v1/models"]
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 60s
       timeout: 10s
       retries: 5
