@@ -6,7 +6,7 @@ services:
     env_file:
       - .env
     ports:
-      - "8000:8000"
+      - "8002:8002"
     volumes:
       - ./:/app
       - hf_cache:/hf_cache
