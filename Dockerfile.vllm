@@ -11,7 +11,7 @@ ARG QWEN_MODEL=Qwen/Qwen3-4B-Instruct-2507
 ENV VLLM_API_KEY=${VLLM_API_KEY}
 ENV QWEN_MODEL=${QWEN_MODEL}
 
-EXPOSE 8001
+EXPOSE 8002
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=300s --retries=3 \
     CMD curl -f http://localhost:8002/health || exit 1
