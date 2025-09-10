@@ -1,5 +1,5 @@
-fastapi==0.116.1
-uvicorn[standard]==0.40.0
+fastapi
+uvicorn
 pydantic==2.10.6
 pillow==11.3.0
 python-multipart==0.0.20
