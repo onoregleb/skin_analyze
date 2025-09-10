@@ -1,16 +1,38 @@
+# ---------- базовый образ ----------
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y python3 python3-pip git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv git && \
+    rm -rf /var/lib/apt/lists/*
 
+# ---------- юзер ----------
 ENV HF_HOME=/hf_cache
-RUN useradd -m appuser && mkdir -p /app ${HF_HOME} && chown -R appuser:appuser /app ${HF_HOME}
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app ${HF_HOME} && \
+    chown -R appuser:appuser /app ${HF_HOME}
 USER appuser
-
 WORKDIR /app
-COPY --chown=appuser:appuser requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
 
+# ---------- обновляем pip ----------
+RUN python3 -m pip install --upgrade --no-cache-dir pip setuptools wheel
+
+# ---------- ставим тяжёлые пакеты совместных версий ----------
+RUN pip install --no-cache-dir \
+        torch==2.4.0 \
+        torchvision==0.19.0 \
+        transformers==4.45.2 \
+        vllm==0.6.2 \
+        xformers==0.0.27.post2 \
+        accelerate==0.34.2 \
+        safetensors==0.4.4
+
+# ---------- остальные зависимости ----------
+COPY --chown=appuser:appuser requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ---------- код ----------
 COPY --chown=appuser:appuser . .
 
 EXPOSE 8000
