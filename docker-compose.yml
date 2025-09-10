@@ -36,9 +36,10 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 60s
-      timeout: 10s
-      retries: 5
+      interval: 120s
+      timeout: 60s
+      retries: 10
+      start_period: 600s
 
 volumes:
   hf_cache:
