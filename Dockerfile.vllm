@@ -11,9 +11,9 @@ ARG QWEN_MODEL=Qwen/Qwen3-4B-Instruct-2507
 ENV VLLM_API_KEY=${VLLM_API_KEY}
 ENV QWEN_MODEL=${QWEN_MODEL}
 
-EXPOSE 8001
+EXPOSE 8002
 
-HEALTHCHECK --interval=30s --timeout=30s --start-period=180s --retries=3 \
-    CMD curl -H "Authorization: Bearer $VLLM_API_KEY" -f http://localhost:8001/health || exit 1
+HEALTHCHECK --interval=30s --timeout=30s --start-period=300s --retries=3 \
+    CMD curl -H "Authorization: Bearer $VLLM_API_KEY" -f http://localhost:8002/v1/models || exit 1
 
-CMD ["sh", "-c", "python3 -m vllm.entrypoints.openai.api_server --model $QWEN_MODEL --port 8001 --api-key $VLLM_API_KEY --trust-remote-code --gpu-memory-utilization 0.9 --max-model-len 78912"]
+CMD ["sh", "-c", "python3 -m vllm.entrypoints.openai.api_server --model $QWEN_MODEL --port 8002 --api-key $VLLM_API_KEY --trust-remote-code --gpu-memory-utilization 0.9 --max-model-len 78912"]
