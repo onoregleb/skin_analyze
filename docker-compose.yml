@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   api:
     build:
@@ -25,9 +24,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.vllm
-    environment:
-      - VLLM_API_KEY=${VLLM_API_KEY:-dev}
-      - QWEN_MODEL=${QWEN_MODEL}
+    env_file:
+      - .env
     ports:
       - "8001:8001"
     deploy:
