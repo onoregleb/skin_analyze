@@ -12,4 +12,4 @@ ENV VLLM_API_KEY=${VLLM_API_KEY}
 ENV QWEN_MODEL=${QWEN_MODEL}
 
 EXPOSE 8001
-CMD ["sh", "-c", "python3 -m vllm.entrypoints.openai.api_server --model $QWEN_MODEL --port 8001 --api-key $VLLM_API_KEY --trust-remote-code"]
+CMD ["sh", "-c", "python3 -m vllm.entrypoints.openai.api_server --model $QWEN_MODEL --port 8001 --api-key $VLLM_API_KEY --trust-remote-code --gpu-memory-utilization 0.9 --max-model-len 78912"]
