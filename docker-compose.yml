@@ -1,0 +1,46 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+      - hf_cache:/hf_cache
+    depends_on:
+      vllm:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  vllm:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+    environment:
+      - VLLM_API_KEY=${VLLM_API_KEY:-dev}
+      - QWEN_MODEL=${QWEN_MODEL}
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/v1/models"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  hf_cache:
