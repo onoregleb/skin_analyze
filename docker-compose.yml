@@ -19,6 +19,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
 
   vllm:
     build:
