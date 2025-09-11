@@ -45,7 +45,8 @@ class QwenClient:
 		)
 		self.model = settings.qwen_model
 
-	def _chat(self, messages: List[Dict[str, Any]], temperature: float = 0.3, tools: list | None = None) -> Any:
+	def _chat(self, messages: List[Dict[str, Any]], temperature: float = 0.3, 
+		   tools: list | None = None, tool_choice: str | None = None) -> Any:
 		attempts = 0
 		last_error: Exception | None = None
 		while attempts < 3:
@@ -58,7 +59,7 @@ class QwenClient:
 					max_tokens=768,
 					timeout=45.0,
 					tools=tools,
-					tool_choice="auto",
+					tool_choice=tool_choice if tools else None,
 				)
 				return response
 			except Exception as e:
@@ -73,7 +74,7 @@ class QwenClient:
 			{"role": "user", "content": f"Visual analysis: {medgemma_summary}\nUser note: {user_text or ''}"},
 		]
 		logger.info("Qwen planning started (tool-enabled)")
-		resp = self._chat(messages, tools=[TOOL_SCHEMA])
+		resp = self._chat(messages, tools=[TOOL_SCHEMA], tool_choice="auto")
 		choice = resp.choices[0]
 		msg = choice.message
 
@@ -133,7 +134,7 @@ class QwenClient:
 			{"role": "user", "content": f"Plan: {planning_json}\nProducts: {products_jsonl}"},
 		]
 		logger.info("Qwen finalizing answer with products")
-		resp = self._chat(messages, temperature=0.2)
+		resp = self._chat(messages, temperature=0.2) 
 		content = resp.choices[0].message.content or ""
 		logger.info(f"Qwen final output length={len(content)}")
 		return content
