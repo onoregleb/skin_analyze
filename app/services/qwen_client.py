@@ -58,6 +58,7 @@ class QwenClient:
 					max_tokens=768,
 					timeout=45.0,
 					tools=tools,
+					tool_choice="auto",
 				)
 				return response
 			except Exception as e:
