@@ -3,6 +3,9 @@ from typing import List
 from PIL import Image
 import torch
 from transformers import AutoProcessor, LlavaForConditionalGeneration
+from app.utils.logging import get_logger
+
+logger = get_logger("medgemma")
 
 
 class MedGemmaService:
@@ -28,53 +31,41 @@ class MedGemmaService:
     @classmethod
     async def analyze_image(cls, image: Image.Image, prompt: str) -> str:
         if cls._model is None:
-            cls()  # Initialize the service
+            cls()
+
+        logger.info(f"[MedGemma] Prompt: {prompt}")
+        logger.info(f"[MedGemma] Image size: {image.size}")
 
         messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "You are an expert dermatologist."}]
+            },
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": prompt},
-                    {"type": "image", "image": image},
-                ],
+                    {"type": "image", "image": image}
+                ]
             }
         ]
 
-        # Получаем текстовый промпт (ещё не токенизированный)
-        chat = cls._processor.apply_chat_template(
+        inputs = cls._processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
-            tokenize=False,
-            return_tensors=None,
-        )
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+        ).to(cls._model.device, dtype=torch.bfloat16)
 
-        # Объединяем текст и картинку → словарь (BatchEncoding)
-        inputs = cls._processor(
-            text=chat,
-            images=image,
-            return_tensors="pt"
-        ).to(cls._model.device)
-
-        # Убираем ключи, которые модель не поддерживает (например, token_type_ids)
-        inputs = {k: v for k, v in inputs.items() if k in cls._model.forward.__code__.co_varnames}
+        input_len = inputs["input_ids"].shape[-1]
 
         with torch.inference_mode():
-            generation = cls._model.generate(
-                **inputs,
-                max_new_tokens=512,
-                do_sample=False
-            )
-            decoded_generation = cls._processor.decode(
-                generation[0], skip_special_tokens=False
-            )
+            generation = cls._model.generate(**inputs, max_new_tokens=512, do_sample=False)
+            generation = generation[0][input_len:]
 
-        # Извлекаем только ответ модели
-        response_start = decoded_generation.find("<start_of_turn>model\n") + len(
-            "<start_of_turn>model\n"
-        )
-        response_end = decoded_generation.find("<end_of_turn>", response_start)
-        response = decoded_generation[response_start:response_end].strip()
-
+        response = cls._processor.decode(generation, skip_special_tokens=True).strip()
+        logger.info(f"[MedGemma] Output: {response}")
         return response
 
 
