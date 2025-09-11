@@ -23,7 +23,8 @@ RUN pip install --no-cache-dir \
         fastapi \
         uvicorn \
         python-multipart \
-        pydantic
+        pydantic \
+        hf_transfer
 
 # ---------- ТОЛЬКО ПОСЛЕ ЭТОГО создаем юзера ----------
 ENV HF_HOME=/hf_cache
