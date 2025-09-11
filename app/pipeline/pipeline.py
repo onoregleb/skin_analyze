@@ -9,7 +9,8 @@ from app.services.qwen_client import QwenClient
 
 async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Dict[str, Any]:
 	# Step 1: Visual analysis via MedGemma
-	visual_summary = MedGemmaService.analyze_image(image, user_text)
+	medgemma_prompt = "<image>Please analyze the skin condition in the image and describe it in detail."
+	visual_summary = await MedGemmaService.analyze_image(image, medgemma_prompt)
 
 	# Step 2: Planning with Qwen using tool calling
 	qwen = QwenClient()
