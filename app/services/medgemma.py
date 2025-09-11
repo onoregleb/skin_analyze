@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import List
 from PIL import Image
 import torch
-from transformers import AutoProcessor, LlavaForConditionalGeneration, BitsAndBytesConfig
+from transformers import AutoProcessor, LlavaForConditionalGeneration
 
 
 class MedGemmaService:
@@ -16,16 +16,9 @@ class MedGemmaService:
 
             model_id = "google/medgemma-4b-it"
 
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-            )
-
             cls._processor = AutoProcessor.from_pretrained(model_id)
             cls._model = LlavaForConditionalGeneration.from_pretrained(
                 model_id,
-                quantization_config=quantization_config,
                 torch_dtype=torch.bfloat16,
                 low_cpu_mem_usage=True,
             )
@@ -47,22 +40,32 @@ class MedGemmaService:
             }
         ]
 
-        inputs = cls._processor.apply_chat_template(
+        # Получаем текстовый промпт (ещё не токенизированный)
+        chat = cls._processor.apply_chat_template(
             messages,
             add_generation_prompt=True,
-            tokenize=True,
-            return_tensors="pt",
+            tokenize=False,
+            return_tensors=None,
+        )
+
+        # Объединяем текст и картинку → словарь (BatchEncoding)
+        inputs = cls._processor(
+            text=chat,
+            images=image,
+            return_tensors="pt"
         ).to(cls._model.device)
 
         with torch.inference_mode():
             generation = cls._model.generate(
-                **inputs, max_new_tokens=512, do_sample=False
+                **inputs,
+                max_new_tokens=512,
+                do_sample=False
             )
             decoded_generation = cls._processor.decode(
                 generation[0], skip_special_tokens=False
             )
 
-        # Extract only the generated response part
+        # Извлекаем только ответ модели
         response_start = decoded_generation.find("<start_of_turn>model\n") + len(
             "<start_of_turn>model\n"
         )
