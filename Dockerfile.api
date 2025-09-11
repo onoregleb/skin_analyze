@@ -1,51 +1,20 @@
-# ---------- базовый образ ----------
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# Dockerfile.api — лёгкий и чистый
+FROM python:3.11-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Установка зависимостей
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv git && \
+    apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-# ---------- юзер ----------
-ENV HF_HOME=/hf_cache
-RUN useradd -m -u 1000 appuser && \
-    mkdir -p /app ${HF_HOME} && \
-    chown -R appuser:appuser /app ${HF_HOME}
-USER appuser
 WORKDIR /app
 
-# ---------- обновляем pip ----------
-RUN python3 -m pip install --upgrade --no-cache-dir pip setuptools wheel
-
-# ---------- ставим совместимые тяжёлые пакеты ----------
-RUN pip install --no-cache-dir \
-        torch==2.4.0 \
-        torchvision==0.19.0 \
-        transformers==4.45.2 \
-        xformers==0.0.27.post2 \
-        accelerate==0.34.2 \
-        safetensors==0.4.4
-
-# ---------- vllm без зависимостей + минимальный набор ----------
-RUN pip install --no-cache-dir --no-deps vllm==0.6.2 && \
-    pip install --no-cache-dir \
-        interegular>=0.3.2 \
-        diskcache>=5.6 \
-        numba>=0.60 \
-        jsonschema>=4.0 \
-        referencing>=0.28 \
-        cloudpickle \
-        nest-asyncio \
-        pycountry \
-        datasets
-
-# ---------- остальные зависимости ----------
-COPY --chown=appuser:appuser requirements.txt ./
+# Копируем и устанавливаем зависимости
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ---------- код ----------
-COPY --chown=appuser:appuser . .
+# Копируем код
+COPY . .
 
 EXPOSE 8000
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
