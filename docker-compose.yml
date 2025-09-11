@@ -5,11 +5,18 @@ services:
       dockerfile: Dockerfile.api
     env_file:
       - .env
+    environment:
+      - HF_ENDPOINT=https://huggingface.co
+      - HF_HUB_CACHE=/hf_cache
+      - TRANSFORMERS_CACHE=/hf_cache
+      - HF_HUB_ENABLE_HF_TRANSFER=1
+      - HF_HUB_OFFLINE=0
     ports:
       - "8000:8000"
     volumes:
       - ./:/app
       - hf_cache:/hf_cache
+      - hf_models:/root/.cache/huggingface
     depends_on:
       vllm:
         condition: service_healthy
@@ -48,3 +55,4 @@ services:
 
 volumes:
   hf_cache:
+  hf_models:
