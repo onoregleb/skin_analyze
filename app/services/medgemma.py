@@ -55,6 +55,9 @@ class MedGemmaService:
             return_tensors="pt"
         ).to(cls._model.device)
 
+        # Убираем ключи, которые модель не поддерживает (например, token_type_ids)
+        inputs = {k: v for k, v in inputs.items() if k in cls._model.forward.__code__.co_varnames}
+
         with torch.inference_mode():
             generation = cls._model.generate(
                 **inputs,
