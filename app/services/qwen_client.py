@@ -41,7 +41,7 @@ class QwenClient:
 	def __init__(self) -> None:
 		self.client = OpenAI(
 			base_url=settings.vllm_base_url,
-			api_key="not-needed",
+			api_key=settings.vllm_api_key,
 		)
 		self.model = settings.qwen_model
 
