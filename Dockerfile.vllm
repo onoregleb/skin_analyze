@@ -16,4 +16,12 @@ EXPOSE 8002
 HEALTHCHECK --interval=30s --timeout=30s --start-period=300s --retries=3 \
     CMD curl -f http://localhost:8002/health || exit 1
 
-CMD ["sh", "-c", "python3 -m vllm.entrypoints.openai.api_server --model $QWEN_MODEL --port 8002 --api-key $VLLM_API_KEY --trust-remote-code --gpu-memory-utilization 0.9 --max-model-len 78912"]
+CMD ["sh", "-c", "python3 -m vllm.entrypoints.openai.api_server \
+  --model $QWEN_MODEL \
+  --port 8002 \
+  --api-key $VLLM_API_KEY \
+  --trust-remote-code \
+  --gpu-memory-utilization 0.9 \
+  --max-model-len 78912 \
+  --enable-auto-tool-choice \
+  --tool-call-parser qwen"]
