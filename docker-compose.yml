@@ -54,6 +54,23 @@ services:
       timeout: 60s
       retries: 10
       start_period: 600s
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8002"
+      - --model
+      - "Qwen/Qwen3-4B-Instruct-2507"
+      - --api-key
+      - "dev"
+      - --enable-auto-tool-choice          # ← Ключевое исправление!
+      - --tool-call-parser
+      - "hermes"                           # ← Совместимость с OpenAI SDK
+      - --trust-remote-code
+      - --max-model-len
+      - "78912"
+      - --dtype
+      - "bfloat16"
 
 volumes:
   hf_cache:
