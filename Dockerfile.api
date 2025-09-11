@@ -1,5 +1,5 @@
 # ---------- базовый образ ----------
-FROM nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
@@ -26,6 +26,13 @@ RUN pip install --no-cache-dir \
         xformers \
         accelerate \
         safetensors
+
+# ---------- базовые пакеты для API ----------
+RUN pip install --no-cache-dir \
+        fastapi==0.109.0 \
+        uvicorn==0.27.0 \
+        python-multipart \
+        pydantic
 
 # ---------- остальные зависимости ----------
 COPY --chown=appuser:appuser requirements.txt ./
