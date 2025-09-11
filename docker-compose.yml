@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      args:
+        - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
     env_file:
       - .env
     environment:

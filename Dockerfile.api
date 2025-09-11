@@ -1,6 +1,9 @@
 # ---------- базовый образ ----------
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
+ARG HUGGINGFACE_HUB_TOKEN
+ENV HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
+
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
