@@ -1,41 +1,75 @@
 from __future__ import annotations
-from typing import Dict, Any
+from typing import List
 from PIL import Image
 import torch
-from transformers import AutoProcessor, AutoModelForCausalLM
-from app.config import settings
-
-
-_MEDGEMMA_MODEL_ID = "google/medgemma-4b-it"
+from transformers import AutoProcessor, LlavaForConditionalGeneration, BitsAndBytesConfig
 
 
 class MedGemmaService:
-	_processor: AutoProcessor | None = None
-	_model: AutoModelForCausalLM | None = None
+    _instance = None
+    _processor = None
+    _model = None
 
-	@classmethod
-	def load(cls) -> None:
-		if cls._processor is None:
-			cls._processor = AutoProcessor.from_pretrained(_MEDGEMMA_MODEL_ID, token=settings.hf_token)
-		if cls._model is None:
-			dtype = torch.bfloat16 if settings.torch_dtype.lower() == "bf16" else torch.float16
-			cls._model = AutoModelForCausalLM.from_pretrained(
-				_MEDGEMMA_MODEL_ID,
-				torch_dtype=dtype,
-				low_cpu_mem_usage=True,
-				device_map=settings.device_map,
-				trust_remote_code=True,
-			)
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(MedGemmaService, cls).__new__(cls)
 
-	@classmethod
-	@torch.inference_mode()
-	def analyze_image(cls, image: Image.Image, user_text: str | None) -> str:
-		if cls._processor is None or cls._model is None:
-			cls.load()
-		prompt = "Analyze the skin condition on this photo. Describe key findings and possible issues."
-		if user_text:
-			prompt += f" User note: {user_text}"
-		inputs = cls._processor(text=prompt, images=image, return_tensors="pt").to(cls._model.device)
-		generate_ids = cls._model.generate(**inputs, max_new_tokens=256)
-		output = cls._processor.batch_decode(generate_ids, skip_special_tokens=True)[0]
-		return output.strip()
+            model_id = "google/medgemma-4b-it"
+
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.bfloat16,
+            )
+
+            cls._processor = AutoProcessor.from_pretrained(model_id)
+            cls._model = LlavaForConditionalGeneration.from_pretrained(
+                model_id,
+                quantization_config=quantization_config,
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+            )
+
+        return cls._instance
+
+    @classmethod
+    async def analyze_image(cls, image: Image.Image, prompt: str) -> str:
+        if cls._model is None:
+            cls()  # Initialize the service
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image", "image": image},
+                ],
+            }
+        ]
+
+        inputs = cls._processor.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            return_tensors="pt",
+        ).to(cls._model.device)
+
+        with torch.inference_mode():
+            generation = cls._model.generate(
+                **inputs, max_new_tokens=512, do_sample=False
+            )
+            decoded_generation = cls._processor.decode(
+                generation[0], skip_special_tokens=False
+            )
+
+        # Extract only the generated response part
+        response_start = decoded_generation.find("<start_of_turn>model\n") + len(
+            "<start_of_turn>model\n"
+        )
+        response_end = decoded_generation.find("<end_of_turn>", response_start)
+        response = decoded_generation[response_start:response_end].strip()
+
+        return response
+
+
+medgemma_service = MedGemmaService()
