@@ -9,7 +9,7 @@ class Settings:
 
 	hf_token: str | None = os.getenv("HF_TOKEN")
 
-	vllm_base_url: str = os.getenv("VLLM_BASE_URL", "http://localhost:8002/v1")
+	vllm_base_url: str = os.getenv("VLLM_BASE_URL", "http://vllm:8002/v1")
 	vllm_api_key: str = os.getenv("VLLM_API_KEY", "dev")
 	qwen_model: str = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 
