@@ -1,8 +1,7 @@
 from __future__ import annotations
 from typing import List
 from PIL import Image
-import torch
-from transformers import AutoProcessor, LlavaForConditionalGeneration
+from transformers import pipeline, AutoProcessor, AutoModelForImageTextToText
 from app.utils.logging import get_logger
 
 logger = get_logger("medgemma")
@@ -10,8 +9,7 @@ logger = get_logger("medgemma")
 
 class MedGemmaService:
     _instance = None
-    _processor = None
-    _model = None
+    _pipe = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -19,18 +17,25 @@ class MedGemmaService:
 
             model_id = "google/medgemma-4b-it"
 
-            cls._processor = AutoProcessor.from_pretrained(model_id)
-            cls._model = LlavaForConditionalGeneration.from_pretrained(
+            model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                torch_dtype=torch.bfloat16,
-                low_cpu_mem_usage=True,
+                torch_dtype="auto",
+                device_map="auto",
+            )
+            processor = AutoProcessor.from_pretrained(model_id)
+
+            cls._pipe = pipeline(
+                "image-text-to-text",
+                model=model,
+                processor=processor,
+                do_sample=False,
             )
 
         return cls._instance
 
     @classmethod
     async def analyze_image(cls, image: Image.Image, prompt: str) -> str:
-        if cls._model is None:
+        if cls._pipe is None:
             cls()
 
         logger.info(f"[MedGemma] Prompt: {prompt}")
@@ -50,21 +55,8 @@ class MedGemmaService:
             }
         ]
 
-        inputs = cls._processor.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-        ).to(cls._model.device, dtype=torch.bfloat16)
-
-        input_len = inputs["input_ids"].shape[-1]
-
-        with torch.inference_mode():
-            generation = cls._model.generate(**inputs, max_new_tokens=512, do_sample=False)
-            generation = generation[0][input_len:]
-
-        response = cls._processor.decode(generation, skip_special_tokens=True).strip()
+        output = cls._pipe(text=messages, max_new_tokens=512)
+        response = output[0]["generated_text"][-1]["content"].strip()
         logger.info(f"[MedGemma] Output: {response}")
         return response
 
