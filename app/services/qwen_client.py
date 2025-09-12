@@ -10,29 +10,26 @@ from app.tools.search_products import search_products
 logger = get_logger("qwen")
 
 SYSTEM_PROMPT_PLAN = (
-    "You are an expert dermatology assistant. Given a visual analysis summary and optional user note, "
-    "provide a detailed skin assessment including:\n"
-    "1. Skin type (oily, dry, combination, normal)\n"
-    "2. Skin condition details:\n"
+    "You are an expert dermatology assistant. When analyzing skin conditions:\n"
+    "1. First, acknowledge and repeat the detailed MedGemma analysis to preserve all important observations\n"
+    "2. Then, provide your structured assessment in these categories:\n"
+    "   - Skin type (oily, dry, combination, normal)\n"
     "   - Hydration level\n"
     "   - Oil production\n"
     "   - Texture analysis\n"
-    "   - Presence of specific issues (acne, blackheads, enlarged pores, etc.)\n"
-    "   - Signs of aging or sun damage if present\n"
+    "   - Specific issues (acne, blackheads, etc.)\n"
+    "   - Signs of aging or sun damage\n"
     "   - Skin barrier condition\n"
     "   - Sensitivity indicators\n"
-    "3. Areas of concern that need addressing\n"
-    "4. Missing elements in current skin condition\n"
-    "5. Elements present in excess\n\n"
-    "If needed, call the search_products tool to fetch appropriate products. "
-    "Always produce a detailed JSON at the end with keys:\n"
-    "- skin_type: detailed skin type\n"
-    "- diagnosis: comprehensive analysis of findings\n"
-    "- concerns: list of specific concerns\n"
-    "- deficiencies: list of missing elements\n"
-    "- excesses: list of elements in excess\n"
-    "- query: search query for products\n"
-    "- need_search: boolean"
+    "3. Finally, produce a detailed JSON with keys:\n"
+    "   - medgemma_analysis: full text of the original analysis\n"
+    "   - skin_type: detailed skin type\n"
+    "   - diagnosis: your comprehensive analysis summary\n"
+    "   - concerns: list of specific concerns\n"
+    "   - deficiencies: list of missing elements\n"
+    "   - excesses: list of elements in excess\n"
+    "   - query: search query for products\n"
+    "   - need_search: boolean"
 )
 
 SYSTEM_PROMPT_FINAL = (
@@ -98,7 +95,7 @@ class QwenClient:
 	async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> Dict[str, Any]:
 		messages: List[Dict[str, Any]] = [
 			{"role": "system", "content": SYSTEM_PROMPT_PLAN},
-			{"role": "user", "content": f"Visual analysis: {medgemma_summary}\nUser note: {user_text or ''}"},
+			{"role": "user", "content": f"MedGemma Analysis:\n{medgemma_summary}\n\nUser note: {user_text or ''}"},
 		]
 		logger.info("Qwen planning started (tool-enabled)")
 		resp = self._chat(messages, tools=[TOOL_SCHEMA], tool_choice="auto")
@@ -162,6 +159,9 @@ class QwenClient:
 		]
 		logger.info("Qwen finalizing answer with products")
 		resp = self._chat(messages, temperature=0.2) 
+		content = resp.choices[0].message.content or ""
+		logger.info(f"Qwen final output length={len(content)}")
+		return content
 		content = resp.choices[0].message.content or ""
 		logger.info(f"Qwen final output length={len(content)}")
 		return content
