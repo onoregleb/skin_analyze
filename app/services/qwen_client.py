@@ -10,14 +10,41 @@ from app.tools.search_products import search_products
 logger = get_logger("qwen")
 
 SYSTEM_PROMPT_PLAN = (
-	"You are a dermatology assistant. Given a visual analysis summary and optional user note, "
-	"infer probable skin type and issues. If needed, call the search_products tool to fetch candidates. "
-	"Always produce a compact JSON at the end with keys: skin_type, diagnosis, query, need_search."
+    "You are an expert dermatology assistant. Given a visual analysis summary and optional user note, "
+    "provide a detailed skin assessment including:\n"
+    "1. Skin type (oily, dry, combination, normal)\n"
+    "2. Skin condition details:\n"
+    "   - Hydration level\n"
+    "   - Oil production\n"
+    "   - Texture analysis\n"
+    "   - Presence of specific issues (acne, blackheads, enlarged pores, etc.)\n"
+    "   - Signs of aging or sun damage if present\n"
+    "   - Skin barrier condition\n"
+    "   - Sensitivity indicators\n"
+    "3. Areas of concern that need addressing\n"
+    "4. Missing elements in current skin condition\n"
+    "5. Elements present in excess\n\n"
+    "If needed, call the search_products tool to fetch appropriate products. "
+    "Always produce a detailed JSON at the end with keys:\n"
+    "- skin_type: detailed skin type\n"
+    "- diagnosis: comprehensive analysis of findings\n"
+    "- concerns: list of specific concerns\n"
+    "- deficiencies: list of missing elements\n"
+    "- excesses: list of elements in excess\n"
+    "- query: search query for products\n"
+    "- need_search: boolean"
 )
 
 SYSTEM_PROMPT_FINAL = (
-	"You are selecting skin-care products based on user case. Given the prior plan and a list of search results, "
-	"pick up to 5 items. Return a JSON with keys: diagnosis, skin_type, explanation, products (list of {name,url,price?,snippet?,image_url?})."
+    "You are an expert dermatologist selecting personalized skin-care products. "
+    "Based on the detailed skin analysis and search results, create a comprehensive care plan.\n"
+    "Return a JSON with:\n"
+    "- diagnosis: detailed skin condition summary\n"
+    "- skin_type: specific skin type with characteristics\n"
+    "- explanation: thorough explanation of why each product is recommended\n"
+    "- routine_steps: recommended skincare routine steps\n"
+    "- products: list of up to 5 items {name,url,price?,snippet?,image_url?} with specific purpose for each\n"
+    "- additional_recommendations: lifestyle and care tips"
 )
 
 TOOL_SCHEMA = {
@@ -56,7 +83,7 @@ class QwenClient:
 					model=self.model,
 					messages=messages,
 					temperature=temperature,
-					max_tokens=768,
+					max_tokens=1024,  # Increased from 768
 					timeout=45.0,
 					tools=tools,
 					tool_choice=tool_choice if tools else None,

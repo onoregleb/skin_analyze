@@ -44,12 +44,26 @@ class MedGemmaService:
         messages = [
             {
                 "role": "system",
-                "content": [{"type": "text", "text": "You are an expert dermatologist."}]
+                "content": [{"type": "text", "text": """You are an expert dermatologist. 
+Provide a detailed analysis of the skin condition using professional terminology. 
+Focus on:
+- Skin type and texture
+- Hydration levels and barrier function
+- Sebum production and pore condition
+- Presence of any lesions, inflammation, or acne
+- Pigmentation and color uniformity
+- Signs of aging or photodamage
+- Visible blood vessels or redness
+- Any abnormal formations or concerning features"""}]
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": prompt},
+                    {"type": "text", "text": """Please analyze this skin image in detail. 
+Describe all visible characteristics and potential concerns.
+Include both surface-level observations and potential underlying conditions.
+Use medical terminology where appropriate, but ensure the description remains understandable.
+Be specific about locations and severity of any issues observed."""},
                     {"type": "image", "image": image}
                 ]
             }
