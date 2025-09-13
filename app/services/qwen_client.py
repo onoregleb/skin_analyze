@@ -30,9 +30,9 @@ SYSTEM_PROMPT_PLAN = (
     "   - deficiencies: list of missing elements\n"
     "   - excesses: list of elements in excess\n"
     "   - query: search query for products\n"
-    "   - need_search: boolean\n\n"
-    "⚠️ IMPORTANT: You must ALWAYS call the tool `search_products` to generate product search results "
-    "based on the analysis, regardless of the input."
+    "   - need_search: boolean\n"
+    "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences."
+    "Return only a valid JSON object, no markdown."
 )
 
 SYSTEM_PROMPT_FINAL = (
@@ -44,7 +44,8 @@ SYSTEM_PROMPT_FINAL = (
     "- explanation: thorough explanation of why each product is recommended\n"
     "- routine_steps: recommended skincare routine steps\n"
     "- products: list of up to 5 items {name,url,price?,snippet?,image_url?} with specific purpose for each\n"
-    "- additional_recommendations: lifestyle and care tips"
+    "- additional_recommendations: lifestyle and care tips\n"
+    "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences."
 )
 
 TOOL_SCHEMA = {
@@ -73,7 +74,7 @@ class QwenClient:
         self.model = settings.qwen_model
 
     def _chat(self, messages: List[Dict[str, Any]], temperature: float = 0.3,
-              tools: list | None = None, tool_choice: str | None = None) -> Any:
+              tools: list | None = None, tool_choice: str | None = None, max_tokens: int = 1024) -> Any:
         attempts = 0
         last_error: Exception | None = None
         backoffs = [1, 2, 4]  # Exponential backoff in seconds
@@ -85,7 +86,7 @@ class QwenClient:
                     model=self.model,
                     messages=messages,
                     temperature=temperature,
-                    max_tokens=2096,
+                    max_tokens=max_tokens,
                     timeout=60.0,
                     tools=tools,
                     tool_choice=tool_choice if tools else None,
@@ -110,7 +111,7 @@ class QwenClient:
         ]
         logger.info("Qwen planning started (tool-enabled)")
         # ⬇️ Всегда требуем вызов тулзы
-        resp = self._chat(messages, tools=[TOOL_SCHEMA], tool_choice="required")
+        resp = self._chat(messages, tools=[TOOL_SCHEMA], tool_choice="required", max_tokens=1024)
         choice = resp.choices[0]
         msg = choice.message
 
@@ -144,7 +145,8 @@ class QwenClient:
                     except Exception as e:
                         logger.warning(f"Tool execution failed: {e}")
 
-            resp2 = self._chat(messages)
+            messages.insert(0, {"role": "system", "content": "Return only a valid JSON object, no markdown."})
+            resp2 = self._chat(messages, temperature=0.2, max_tokens=1024)
             content = resp2.choices[0].message.content or ""
             try:
                 plan = json.loads(content)
@@ -164,7 +166,7 @@ class QwenClient:
             {"role": "user", "content": f"Plan: {planning_json}\nProducts: {products_jsonl}"},
         ]
         logger.info("Qwen finalizing answer with products")
-        resp = self._chat(messages, temperature=0.2)
+        resp = self._chat(messages, temperature=0.2, max_tokens=1024)
         content = resp.choices[0].message.content or ""
         logger.info(f"Qwen final output length={len(content)}")
         return content

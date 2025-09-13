@@ -8,6 +8,7 @@ from PIL import Image
 import httpx
 
 from app.pipeline.pipeline import analyze_skin_pipeline
+from app.services.medgemma import MedGemmaService
 from app.schemas import AnalyzeResponse
 from app.utils.logging import get_logger
 
@@ -32,6 +33,12 @@ app.add_middleware(
 @app.on_event("startup")
 async def on_startup():
 	logger.info("API starting up")
+	try:
+		# Warm up MedGemma model to reduce first-request latency
+		MedGemmaService()
+		logger.info("MedGemma warmed up")
+	except Exception as e:
+		logger.warning(f"MedGemma warmup failed: {e}")
 
 
 @app.on_event("shutdown")

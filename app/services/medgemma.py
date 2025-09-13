@@ -3,6 +3,8 @@ from typing import List
 from PIL import Image
 from transformers import pipeline, AutoProcessor, AutoModelForImageTextToText
 from app.utils.logging import get_logger
+from app.config import settings
+import torch
 
 logger = get_logger("medgemma")
 
@@ -17,10 +19,21 @@ class MedGemmaService:
 
             model_id = "google/medgemma-4b-it"
 
+            # Map dtype from settings
+            dtype_map = {
+                "bf16": torch.bfloat16,
+                "bfloat16": torch.bfloat16,
+                "fp16": torch.float16,
+                "float16": torch.float16,
+                "fp32": torch.float32,
+                "float32": torch.float32,
+            }
+            torch_dtype = dtype_map.get(settings.torch_dtype.lower(), "auto")
+
             model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                torch_dtype="auto",
-                device_map="auto",
+                torch_dtype=torch_dtype,
+                device_map=settings.device_map,
             )
             processor = AutoProcessor.from_pretrained(model_id)
 
@@ -69,7 +82,7 @@ Be specific about locations and severity of any issues observed."""},
             }
         ]
 
-        output = cls._pipe(text=messages, max_new_tokens=2048)
+        output = cls._pipe(text=messages, max_new_tokens=settings.medgemma_max_new_tokens)
         response = output[0]["generated_text"][-1]["content"].strip()
         logger.info(f"[MedGemma] Output: {response}")
         return response

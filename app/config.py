@@ -13,6 +13,9 @@ class Settings:
 	vllm_api_key: str = os.getenv("VLLM_API_KEY", "dev")
 	qwen_model: str = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 
+	# MedGemma generation length (lower = faster). Default tuned for speed/quality.
+	medgemma_max_new_tokens: int = int(os.getenv("MEDGEMMA_MAX_NEW_TOKENS", "1024"))
+
 	google_cse_api_key: str | None = os.getenv("GOOGLE_CSE_API_KEY")
 	google_cse_cx: str | None = os.getenv("GOOGLE_CSE_CX")
 
