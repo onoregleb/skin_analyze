@@ -5,6 +5,7 @@ from openai import OpenAI
 from app.config import settings
 from app.utils.logging import get_logger
 from app.tools.search_products import search_products
+import time
 
 
 logger = get_logger("qwen")
@@ -73,6 +74,8 @@ class QwenClient:
 		   tools: list | None = None, tool_choice: str | None = None) -> Any:
 		attempts = 0
 		last_error: Exception | None = None
+		# Exponential backoff in seconds
+		backoffs = [1, 2, 4]
 		while attempts < 3:
 			attempts += 1
 			try:
@@ -81,7 +84,7 @@ class QwenClient:
 					messages=messages,
 					temperature=temperature,
 					max_tokens=2096, 
-					timeout=45.0,
+					timeout=60.0,
 					tools=tools,
 					tool_choice=tool_choice if tools else None,
 				)
@@ -89,6 +92,13 @@ class QwenClient:
 			except Exception as e:
 				last_error = e
 				logger.warning(f"Qwen chat attempt {attempts} failed: {e}")
+				if attempts < 3:
+					# Sleep with backoff before next retry
+					delay = backoffs[attempts - 1]
+					try:
+						time.sleep(delay)
+					except Exception:
+						pass
 		logger.error("Qwen chat failed after retries")
 		raise last_error if last_error else RuntimeError("Qwen chat failed")
 
@@ -103,6 +113,7 @@ class QwenClient:
 		msg = choice.message
 
 		# Tool call branch
+		collected_products: List[Dict[str, Any]] = []
 		if getattr(msg, "tool_calls", None):
 			logger.info(f"Qwen requested tool_calls: {[t.function.name for t in msg.tool_calls]}")
 			for tool_call in msg.tool_calls:
@@ -114,6 +125,7 @@ class QwenClient:
 						logger.info(f"Executing tool search_products args={{'query': '{query}', 'num': {num}}}")
 						products = await search_products(query=query, num=num)
 						logger.info(f"Tool search_products returned count={len(products)}")
+						collected_products = products
 						tool_message = {
 							"role": "tool",
 							"tool_call_id": tool_call.id,
@@ -135,22 +147,25 @@ class QwenClient:
 			content = resp2.choices[0].message.content or ""
 			try:
 				plan = json.loads(content)
+				# Expose raw tool results alongside the plan
+				plan["tool_products"] = collected_products
 				logger.info(f"Qwen plan parsed successfully need_search={plan.get('need_search')} skin_type={plan.get('skin_type')}")
 				return plan
 			except Exception:
 				logger.warning("Qwen plan JSON parse failed; returning fallback")
-				return {"skin_type": "unknown", "diagnosis": content[:200], "query": "", "need_search": False}
+				return {"skin_type": "unknown", "diagnosis": content[:200], "query": "", "need_search": False, "tool_products": collected_products}
 
 		# No tool call
 		logger.info("Qwen did not request any tool; parsing direct content as plan")
 		content = msg.content or ""
 		try:
 			plan = json.loads(content)
+			plan["tool_products"] = []
 			logger.info(f"Qwen direct plan parsed need_search={plan.get('need_search')} skin_type={plan.get('skin_type')}")
 			return plan
 		except Exception:
 			logger.warning("Qwen direct plan parse failed; returning fallback")
-			return {"skin_type": "unknown", "diagnosis": content[:200], "query": "", "need_search": False}
+			return {"skin_type": "unknown", "diagnosis": content[:200], "query": "", "need_search": False, "tool_products": []}
 
 	def finalize_with_products(self, planning_json: str, products_jsonl: str) -> str:
 		messages = [
@@ -159,9 +174,6 @@ class QwenClient:
 		]
 		logger.info("Qwen finalizing answer with products")
 		resp = self._chat(messages, temperature=0.2) 
-		content = resp.choices[0].message.content or ""
-		logger.info(f"Qwen final output length={len(content)}")
-		return content
 		content = resp.choices[0].message.content or ""
 		logger.info(f"Qwen final output length={len(content)}")
 		return content

@@ -33,12 +33,14 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
     logger.info(f"[TIMING] Qwen planning took {timings['qwen_plan_seconds']} seconds")
 
     # Step 3: Finalize answer with Qwen
-    products = planning.get("products") or []
+    # Prefer raw tool results from Qwen planning
+    products = planning.get("tool_products") or []
     start_time = time.perf_counter()
     final_text = qwen.finalize_with_products(
         json.dumps(planning, ensure_ascii=False),
         json.dumps(products, ensure_ascii=False)
     )
+
     qwen_finalize_time = time.perf_counter() - start_time
     timings["qwen_finalize_seconds"] = round(qwen_finalize_time, 2)
     logger.info(f"[STEP 3] Qwen finalize raw output: {final_text}")
@@ -56,6 +58,9 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
         }
 
     final["products"] = (final.get("products") or [])[:5]
+    # Add intermediate visibility fields
+    final["medgemma_summary"] = visual_summary
+    final["tool_products"] = products[:5]
     final["timings"] = timings 
     
     logger.info(f"[STEP 3] Final response: {json.dumps(final, ensure_ascii=False)}")

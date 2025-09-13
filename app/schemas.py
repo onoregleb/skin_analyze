@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 
 class ProductItem(BaseModel):
@@ -15,3 +15,7 @@ class AnalyzeResponse(BaseModel):
 	skin_type: str
 	explanation: str
 	products: List[ProductItem]
+	# Extended fields for intermediate visibility
+	medgemma_summary: str = ""
+	tool_products: List[ProductItem] = []
+	timings: Dict[str, float] = {}
