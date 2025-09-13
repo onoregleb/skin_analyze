@@ -5,7 +5,7 @@ from typing import List, Optional, Dict
 class ProductItem(BaseModel):
 	name: str
 	url: str
-	price: Optional[str] = None
+	price: Optional[str | float] = None
 	snippet: Optional[str] = None
 	image_url: Optional[str] = None
 

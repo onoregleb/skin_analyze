@@ -13,9 +13,14 @@ RUN apt-get update && \
 # ---------- обновляем pip и устанавливаем пакеты ОТ ROOT ----------
 RUN python3 -m pip install --upgrade --no-cache-dir pip setuptools wheel
 
-RUN pip install --no-cache-dir \
+# Install CUDA-enabled PyTorch (cu121) for GPU acceleration
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
         torch \
         torchvision \
+        torchaudio
+
+# Install remaining Python dependencies
+RUN pip install --no-cache-dir \
         transformers \
         xformers \
         accelerate \
