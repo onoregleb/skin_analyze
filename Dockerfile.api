@@ -14,10 +14,7 @@ RUN apt-get update && \
 RUN python3 -m pip install --upgrade --no-cache-dir pip setuptools wheel
 
 # Install CUDA-enabled PyTorch (cu121) for GPU acceleration
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
-        torch \
-        torchvision \
-        torchaudio
+RUN pip install --no-cache-dir torch torchvision torchaudio
 
 # Install remaining Python dependencies
 RUN pip install --no-cache-dir \
