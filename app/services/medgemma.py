@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import List
 from PIL import Image
 from transformers import pipeline, AutoProcessor, AutoModelForImageTextToText
 from app.utils.logging import get_logger
@@ -32,7 +31,7 @@ class MedGemmaService:
 
             model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                torch_dtype=torch_dtype,
+                torch_dtype=torch.bfloat16,
                 device_map=settings.device_map,
             )
             # Try to use fast processor if available
