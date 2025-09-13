@@ -69,7 +69,7 @@ Be specific about locations and severity of any issues observed."""},
             }
         ]
 
-        output = cls._pipe(text=messages, max_new_tokens=512)
+        output = cls._pipe(text=messages, max_new_tokens=2048)
         response = output[0]["generated_text"][-1]["content"].strip()
         logger.info(f"[MedGemma] Output: {response}")
         return response

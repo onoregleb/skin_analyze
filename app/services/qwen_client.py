@@ -80,7 +80,7 @@ class QwenClient:
 					model=self.model,
 					messages=messages,
 					temperature=temperature,
-					max_tokens=1024,  # Increased from 768
+					max_tokens=2096, 
 					timeout=45.0,
 					tools=tools,
 					tool_choice=tool_choice if tools else None,
