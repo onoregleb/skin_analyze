@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import List
 from PIL import Image
 from transformers import pipeline, AutoProcessor, AutoModelForImageTextToText
 from app.utils.logging import get_logger
@@ -51,17 +50,29 @@ class MedGemmaService:
         return cls._instance
 
     @classmethod
-    async def analyze_image(cls, image: Image.Image, prompt: str) -> str:
+    async def analyze_image(cls, image: Image.Image, mode: str = "extended") -> str:
         if cls._pipe is None:
             cls()
 
-        logger.info(f"[MedGemma] Prompt: {prompt}")
-        logger.info(f"[MedGemma] Image size: {image.size}")
+        mode_norm = (mode or "extended").strip().lower()
+        if mode_norm not in {"basic", "extended"}:
+            mode_norm = "extended"
 
-        messages = [
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": """You are an expert dermatologist. 
+        # Build messages based on requested mode
+        if mode_norm == "basic":
+            prompt_system = (
+                "You are a professional dermatologist. Provide a concise, user-friendly assessment.\n"
+                "Return exactly two labeled sections in English:\n"
+                "Summary: a brief 1-2 sentence overview of the skin condition.\n"
+                "Description (basic): a short paragraph (3-6 sentences) focusing on key observations and main concerns."
+            )
+            prompt_user = (
+                "Please analyze this skin image. Keep it concise and approachable.\n"
+                "Respond using the two sections: 'Summary:' and 'Description (basic):'."
+            )
+        else:  # extended
+            prompt_system = (
+                """You are an expert dermatologist. 
 Provide a detailed analysis of the skin condition using professional terminology. 
 Focus on:
 - Skin type and texture
@@ -71,16 +82,29 @@ Focus on:
 - Pigmentation and color uniformity
 - Signs of aging or photodamage
 - Visible blood vessels or redness
-- Any abnormal formations or concerning features"""}]
+- Any abnormal formations or concerning features"""                          
+            )
+            prompt_user = (
+                """Please analyze this skin image in detail. 
+Describe all visible characteristics and potential concerns.
+Include both surface-level observations and potential underlying conditions.
+Use medical terminology where appropriate, but ensure the description remains understandable.
+Be specific about locations and severity of any issues observed.
+Respond using the two sections: 'Summary:' and 'Description (extended):'.""" )
+
+        logger.info(f"[MedGemma] Mode: {mode_norm}")
+
+        logger.info(f"[MedGemma] Image size: {image.size}")
+
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": prompt_system}]
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": """Please analyze this skin image in detail. 
-Describe all visible characteristics and potential concerns.
-Include both surface-level observations and potential underlying conditions.
-Use medical terminology where appropriate, but ensure the description remains understandable.
-Be specific about locations and severity of any issues observed."""},
+                    {"type": "text", "text": prompt_user},
                     {"type": "image", "image": image}
                 ]
             }
