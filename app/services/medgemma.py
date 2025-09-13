@@ -35,7 +35,11 @@ class MedGemmaService:
                 torch_dtype=torch_dtype,
                 device_map=settings.device_map,
             )
-            processor = AutoProcessor.from_pretrained(model_id)
+            # Try to use fast processor if available
+            try:
+                processor = AutoProcessor.from_pretrained(model_id, use_fast=True)
+            except TypeError:
+                processor = AutoProcessor.from_pretrained(model_id)
 
             cls._pipe = pipeline(
                 "image-text-to-text",
@@ -83,7 +87,24 @@ Be specific about locations and severity of any issues observed."""},
         ]
 
         output = cls._pipe(text=messages, max_new_tokens=settings.medgemma_max_new_tokens)
-        response = output[0]["generated_text"][-1]["content"].strip()
+        generated = output[0].get("generated_text")
+        response = ""
+        # Case 1: generated_text is a plain string
+        if isinstance(generated, str):
+            response = generated.strip()
+        # Case 2: list-of-dicts with content fields
+        elif isinstance(generated, list):
+            # Find last text chunk or join all text contents
+            texts = []
+            for part in generated:
+                if isinstance(part, dict):
+                    if "content" in part and isinstance(part["content"], str):
+                        texts.append(part["content"]) 
+                    elif "text" in part and isinstance(part["text"], str):
+                        texts.append(part["text"]) 
+            response = "\n".join([t.strip() for t in texts if t and t.strip()])
+        else:
+            response = ""
         logger.info(f"[MedGemma] Output: {response}")
         return response
 

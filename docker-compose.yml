@@ -19,6 +19,10 @@ services:
       - ./:/app
       - hf_cache:/hf_cache
       - hf_models:/root/.cache/huggingface
+    device_requests:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
     depends_on:
       vllm:
         condition: service_healthy
@@ -42,6 +46,10 @@ services:
       - .env
     ports:
       - "8002:8002"
+    device_requests:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
     deploy:
       resources:
         reservations:
