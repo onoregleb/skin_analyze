@@ -19,9 +19,6 @@ services:
       - ./:/app
       - hf_cache:/hf_cache
       - hf_models:/root/.cache/huggingface
-    depends_on:
-      vllm:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -33,6 +30,17 @@ services:
         reservations:
           devices:
             - capabilities: ["gpu"]
+
+  swagger:
+    image: swaggerapi/swagger-ui:latest
+    environment:
+      - URL=http://localhost:8000/openapi.json
+    ports:
+      - "8001:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
   vllm:
     build:
