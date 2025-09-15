@@ -201,24 +201,24 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
         timings["medgemma_seconds"] = round(medgemma_time, 2)
         job_manager.update_progress(job_id, {"medgemma_summary": visual_summary, "timings": timings})
 
-        # Step 2: Qwen planning with tool
-        from app.services.qwen_client import QwenClient  # local import to avoid startup latency
-        qwen = QwenClient()
+        # Step 2: Gemini planning with tool
+        from app.services.gemini_client import GeminiClient  # local import to avoid startup latency
+        gemini = GeminiClient()
         start_time = asyncio.get_running_loop().time()
-        planning = await qwen.plan_with_tool(visual_summary, user_text)
-        qwen_plan_time = asyncio.get_running_loop().time() - start_time
-        timings["qwen_plan_seconds"] = round(qwen_plan_time, 2)
+        planning = await gemini.plan_with_tool(visual_summary, user_text)
+        gemini_plan_time = asyncio.get_running_loop().time() - start_time
+        timings["gemini_plan_seconds"] = round(gemini_plan_time, 2)
         job_manager.update_progress(job_id, {"planning": planning, "timings": timings})
 
         # Step 3: Finalization
         products = planning.get("tool_products") or []
         start_time = asyncio.get_running_loop().time()
-        final_text = qwen.finalize_with_products(
+        final_text = gemini.finalize_with_products(
             json.dumps(planning, ensure_ascii=False),
             json.dumps(products, ensure_ascii=False),
         )
-        qwen_finalize_time = asyncio.get_running_loop().time() - start_time
-        timings["qwen_finalize_seconds"] = round(qwen_finalize_time, 2)
+        gemini_finalize_time = asyncio.get_running_loop().time() - start_time
+        timings["gemini_finalize_seconds"] = round(gemini_finalize_time, 2)
 
         try:
             final = json.loads(final_text)

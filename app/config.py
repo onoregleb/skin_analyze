@@ -13,6 +13,10 @@ class Settings:
 	vllm_api_key: str = os.getenv("VLLM_API_KEY", "dev")
 	qwen_model: str = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 
+	# Gemini API settings
+	gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
+	gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+
 	# MedGemma generation length (lower = faster). Default tuned for speed/quality.
 	medgemma_max_new_tokens: int = int(os.getenv("MEDGEMMA_MAX_NEW_TOKENS", "1024"))
 
