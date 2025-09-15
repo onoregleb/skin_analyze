@@ -32,7 +32,7 @@ class MedGemmaService:
             model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
                 torch_dtype=torch_dtype,
-                device_map=settings.device_map,
+                device_map={"": "cuda:0"},
             )
             # Try to use fast processor if available
             try:
@@ -44,6 +44,7 @@ class MedGemmaService:
                 "image-text-to-text",
                 model=model,
                 processor=processor,
+                device=0,
                 do_sample=False,
             )
 
