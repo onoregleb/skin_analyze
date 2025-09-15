@@ -27,7 +27,7 @@ class MedGemmaService:
                 "fp32": torch.float32,
                 "float32": torch.float32,
             }
-            torch_dtype = dtype_map.get(settings.dtype.lower(), "auto")
+            # torch_dtype = dtype_map.get(settings.dtype.lower(), "auto")
 
             model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
