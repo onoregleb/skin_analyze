@@ -186,7 +186,9 @@ class GeminiClient:
         tool_parts = [{
             "function_response": {
                 "name": fc["name"],
-                "content": json.dumps(fc["response"]["content"]),  # ✅ Правильно
+                "response": {
+                    "result": fc["response"]["content"]
+                }
             }
         } for fc in func_calls]
 
