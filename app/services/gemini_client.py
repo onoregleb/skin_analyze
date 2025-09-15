@@ -250,7 +250,6 @@ class GeminiClient:
                 "need_search": True,
                 "medgemma_analysis": medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary
             }
-            fallback_plan["tool_products"] = collected_products
             logger.info(f"[Gemini] Fallback plan created need_search={fallback_plan.get('need_search')} skin_type={fallback_plan.get('skin_type')}")
             return fallback_plan
 
@@ -281,7 +280,6 @@ class GeminiClient:
         plan.setdefault("need_search", True)
         plan.setdefault("medgemma_analysis", medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary)
         
-        plan["tool_products"] = collected_products
         logger.info(f"[Gemini] Plan parsed need_search={plan.get('need_search')} skin_type={plan.get('skin_type')}")
         return plan
 

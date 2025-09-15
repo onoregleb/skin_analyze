@@ -17,7 +17,6 @@ class AnalyzeResponse(BaseModel):
 	products: List[ProductItem]
 	# Extended fields for intermediate visibility
 	medgemma_summary: str = ""
-	tool_products: List[ProductItem] = []
 	timings: Dict[str, float] = {}
 
 

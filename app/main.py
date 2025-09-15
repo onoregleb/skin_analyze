@@ -211,7 +211,6 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
         job_manager.update_progress(job_id, {"planning": planning, "timings": timings})
 
         # Step 3: Finalization
-        products = planning.get("tool_products") or []
         start_time = asyncio.get_running_loop().time()
         final_text = gemini.finalize_with_products(
             json.dumps(planning, ensure_ascii=False),
@@ -233,7 +232,6 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
         # Normalize output like pipeline
         final["products"] = (final.get("products") or [])[:5]
         final["medgemma_summary"] = visual_summary
-        final["tool_products"] = products[:5]
         final["timings"] = timings
 
         job_manager.complete(job_id, final)
