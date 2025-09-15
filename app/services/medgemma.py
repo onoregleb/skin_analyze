@@ -44,7 +44,6 @@ class MedGemmaService:
                 "image-text-to-text",
                 model=model,
                 processor=processor,
-                device=0,
                 do_sample=False,
             )
 
