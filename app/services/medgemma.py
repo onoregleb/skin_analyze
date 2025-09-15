@@ -27,11 +27,11 @@ class MedGemmaService:
                 "fp32": torch.float32,
                 "float32": torch.float32,
             }
-            torch_dtype = dtype_map.get(settings.torch_dtype.lower(), "auto")
+            torch_dtype = dtype_map.get(settings.dtype.lower(), "auto")
 
             model = AutoModelForImageTextToText.from_pretrained(
                 model_id,
-                torch_dtype=torch.bfloat16,
+                torch_dtype=torch_dtype,
                 device_map=settings.device_map,
             )
             # Try to use fast processor if available
