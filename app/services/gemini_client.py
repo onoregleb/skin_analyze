@@ -55,14 +55,15 @@ TOOL_DECLARATIONS = [{
     "name": "search_products",
     "description": "Search skincare products on the web via Google Custom Search.",
     "parameters": {
-        "type": "object",
+        "type": "OBJECT",
         "properties": {
-            "query": {"type": "string"},
-            "num": {"type": "integer"}
+            "query": {"type": "STRING"},
+            "num": {"type": "INTEGER"}
         },
         "required": ["query"]
     }
 }]
+
 
 class GeminiClient:
     def __init__(self) -> None:
@@ -93,7 +94,7 @@ class GeminiClient:
             try:
                 response = model.generate_content(
                     [{"role": "user", "parts": user_parts}],
-                    tool_config={"function_calling_config": {"mode": "ANY"}},
+                    tool_config={"function_calling_config": {"mode": "AUTO"}},
                     generation_config={"temperature": 0.3, "max_output_tokens": 1024},
                 )
                 break
