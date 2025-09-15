@@ -15,9 +15,8 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
     timings = {} 
 
     # Step 1: Visual analysis via MedGemma
-    medgemma_prompt = "Please analyze the skin condition in the image and describe it in detail."
     start_time = time.perf_counter()
-    visual_summary = await MedGemmaService.analyze_image(image, medgemma_prompt)
+    visual_summary = await MedGemmaService.analyze_image(image, mode="extended")
     medgemma_time = time.perf_counter() - start_time
     timings["medgemma_seconds"] = round(medgemma_time, 2)
     logger.info(f"[STEP 1] MedGemma visual_summary: {visual_summary}")

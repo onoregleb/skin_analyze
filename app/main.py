@@ -11,7 +11,7 @@ import json
 
 from app.pipeline.pipeline import analyze_skin_pipeline
 from app.services.medgemma import MedGemmaService
-from app.schemas import AnalyzeResponse
+from app.schemas import AnalyzeResponse, SkinAnalysisResponse
 from app.utils.logging import get_logger
 from app.services.job_manager import job_manager, JobStatus
 
@@ -71,6 +71,55 @@ async def _fetch_image_from_url(url: str) -> bytes:
 		raise HTTPException(status_code=400, detail=f"Failed to fetch image_url: {e}")
 
 
+def _parse_medgemma_sections(text: str, mode: str) -> tuple[str, str]:
+	"""Parse 'Summary:' and 'Description (...)' sections from the model output.
+	Fallback: first sentence as summary, remainder as description.
+	"""
+	summary = ""
+	description = text.strip() if text else ""
+	if not text:
+		return summary, description
+
+	lines = [l.strip() for l in text.splitlines()]
+	current = None
+	collected = {"summary": [], "description": []}
+	desc_label_basic = "description (basic)"
+	desc_label_ext = "description (extended)"
+
+	for ln in lines:
+		low = ln.lower()
+		if low.startswith("summary:"):
+			current = "summary"
+			content = ln.split(":", 1)[1].strip()
+			if content:
+				collected[current].append(content)
+			continue
+		if low.startswith(desc_label_basic + ":") or low.startswith(desc_label_ext + ":"):
+			current = "description"
+			content = ln.split(":", 1)[1].strip()
+			if content:
+				collected[current].append(content)
+			continue
+		if current:
+			collected[current].append(ln)
+
+	summary = " ".join([s for s in collected["summary"] if s]).strip()
+	description = "\n".join([s for s in collected["description"] if s]).strip() or description
+
+	if not summary:
+		# Fallback heuristic: split by common sentence boundaries
+		for sep in [". ", "\n", "! ", "? "]:
+			idx = text.find(sep)
+			if idx != -1:
+				summary = text[: idx + len(sep)].strip()
+				description = text[idx + len(sep):].strip()
+				break
+		if not summary:
+			summary = text.strip()
+			description = text.strip()
+	return summary, description
+
+
 @app.post("/analyze")
 async def analyze(
 	image: UploadFile | None = File(default=None),
@@ -111,6 +160,33 @@ async def analyze(
 		raise HTTPException(status_code=500, detail=str(e))
 
 
+# Simple MedGemma-only endpoint with mode selector
+@app.get("/v1/skin-analysis")
+async def skin_analysis(image_url: str, mode: str = "extended"):
+	try:
+		mode_norm = (mode or "extended").strip().lower()
+		if mode_norm not in {"basic", "extended"}:
+			mode_norm = "extended"
+		image_bytes = await _fetch_image_from_url(image_url)
+		pil_image = await _bytes_to_image(image_bytes)
+		start = asyncio.get_running_loop().time()
+		medgemma_text = await MedGemmaService.analyze_image(pil_image, mode=mode_norm)
+		elapsed = asyncio.get_running_loop().time() - start
+		summary, description = _parse_medgemma_sections(medgemma_text, mode_norm)
+		resp = SkinAnalysisResponse(
+			mode=mode_norm,
+			summary=summary,
+			description=description,
+			timings={"medgemma_seconds": round(elapsed, 2)},
+		)
+		return JSONResponse(content=resp.model_dump())
+	except HTTPException:
+		raise
+	except Exception as e:
+		logger.exception("Unexpected error in /v1/skin-analysis")
+		raise HTTPException(status_code=500, detail=str(e))
+
+
 # -----------------------------
 # Background job version
 # -----------------------------
@@ -119,9 +195,8 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
     timings: dict[str, float] = {}
     try:
         # Step 1: MedGemma
-        medgemma_prompt = "Please analyze the skin condition in the image and describe it in detail."
         start_time = asyncio.get_running_loop().time()
-        visual_summary = await MedGemmaService.analyze_image(image, medgemma_prompt)
+        visual_summary = await MedGemmaService.analyze_image(image, mode="extended")
         medgemma_time = asyncio.get_running_loop().time() - start_time
         timings["medgemma_seconds"] = round(medgemma_time, 2)
         job_manager.update_progress(job_id, {"medgemma_summary": visual_summary, "timings": timings})

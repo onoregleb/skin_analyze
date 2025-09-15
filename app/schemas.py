@@ -19,3 +19,10 @@ class AnalyzeResponse(BaseModel):
 	medgemma_summary: str = ""
 	tool_products: List[ProductItem] = []
 	timings: Dict[str, float] = {}
+
+
+class SkinAnalysisResponse(BaseModel):
+	mode: str
+	summary: str
+	description: str
+	timings: Dict[str, float] = {}
