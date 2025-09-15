@@ -72,17 +72,17 @@ class MedGemmaService:
             )
         else:  # extended
             prompt_system = (
-                """You are an expert dermatologist. 
-Provide a detailed analysis of the skin condition using professional terminology. 
-Focus on:
-- Skin type and texture
-- Hydration levels and barrier function
-- Sebum production and pore condition
-- Presence of any lesions, inflammation, or acne
-- Pigmentation and color uniformity
-- Signs of aging or photodamage
-- Visible blood vessels or redness
-- Any abnormal formations or concerning features"""                          
+                            """You are an expert dermatologist. 
+            Provide a detailed analysis of the skin condition using professional terminology. 
+            Focus on:
+            - Skin type and texture
+            - Hydration levels and barrier function
+            - Sebum production and pore condition
+            - Presence of any lesions, inflammation, or acne
+            - Pigmentation and color uniformity
+            - Signs of aging or photodamage
+            - Visible blood vessels or redness
+            - Any abnormal formations or concerning features"""                          
             )
             prompt_user = (
                 """Please analyze this skin image in detail. 
