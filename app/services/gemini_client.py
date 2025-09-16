@@ -289,11 +289,11 @@ class GeminiClient:
 
         # Проверяем, не заблокирован ли ответ
         candidate = resp.candidates[0]
-        if candidate.finish_reason != genai.types.FinishReason.STOP:
+        if candidate.finish_reason != genai.FinishReason.STOP:
             safety_reason = getattr(candidate.finish_reason, 'name', str(candidate.finish_reason))
             logger.warning(f"[Gemini] Response blocked due to finish reason: {safety_reason}")
             for rating in candidate.safety_ratings:
-                if rating.probability != genai.types.SafetyProbability.NEARLY_NONE:
+                if rating.probability != genai.SafetyProbability.NEARLY_NONE:
                     logger.warning(f"[Gemini] Safety rating: {rating.category} -> {rating.probability}")
             return self._fallback_response(f"Response blocked: {safety_reason}")
 
