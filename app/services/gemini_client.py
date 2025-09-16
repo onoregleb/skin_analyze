@@ -94,7 +94,7 @@ class GeminiClient:
             try:
                 response = model.generate_content(
                     [{"role": "user", "parts": user_parts}],
-                    tool_config={"function_calling_config": {"mode": "AUTO"}},
+                    tool_config={"function_calling_config": {"mode": "ANY", "allowed_function_names": ["search_products"]}},
                     generation_config={"temperature": 0.3, "max_output_tokens": 1024},
                 )
                 break
@@ -142,45 +142,6 @@ class GeminiClient:
             except Exception as e:
                 logger.warning(f"[Gemini] Parse function_call error: {e}")
 
-        # Fallback: if no function calls, create default search
-        if not func_calls:
-            logger.warning("[Gemini] No function calls produced, creating fallback search...")
-            # Try to extract basic info from the response or create default query
-            default_query = "skincare products for acne blackheads dehydration"
-            try:
-                # Try to get text content to extract skin type
-                content_text = ""
-                try:
-                    content_text = response.text
-                except:
-                    try:
-                        content_text = response.candidates[0].content.parts[0].text
-                    except:
-                        pass
-                
-                if content_text:
-                    # Simple extraction of potential skin concerns
-                    if "blackheads" in content_text.lower() or "comedones" in content_text.lower():
-                        default_query = "skincare products for blackheads comedones"
-                    elif "dehydration" in content_text.lower() or "dry" in content_text.lower():
-                        default_query = "skincare products for dehydrated skin"
-                    elif "aging" in content_text.lower() or "fine lines" in content_text.lower():
-                        default_query = "anti-aging skincare products"
-            except Exception as e:
-                logger.warning(f"[Gemini] Error extracting content for fallback: {e}")
-            
-            logger.info(f"[Gemini] Executing fallback search with query: {default_query}")
-            try:
-                products = await search_products(query=default_query, num=5)
-            except Exception as e:
-                logger.warning(f"[Gemini] Fallback search_products failed: {e}")
-                products = []
-            
-            collected_products = products
-            func_calls.append({
-                "name": "search_products",
-                "response": {"name": "search_products", "content": products},
-            })
 
         # Build a follow-up turn including the assistant function_call and our tool responses
         tool_parts = [{
