@@ -234,7 +234,7 @@ class GeminiClient:
                 ]
             })
 
-        # Now request final plan
+        # Now request final plan - REMOVED response_mime_type to fix the error
         attempts = 0
         followup = None
         while attempts < 3:
@@ -245,8 +245,7 @@ class GeminiClient:
                     generation_config={
                         "temperature": 0.2,
                         "max_output_tokens": 1024,
-                        # Encourage the model to return strict JSON here
-                        "response_mime_type": "application/json",
+                        # REMOVED: "response_mime_type": "application/json", - This was causing the error
                     },
                 )
                 break
@@ -290,10 +289,30 @@ class GeminiClient:
             logger.info(f"[Gemini] Fallback plan created need_search={fallback_plan.get('need_search')} skin_type={fallback_plan.get('skin_type')}")
             return fallback_plan, collected_products
 
-        # Parse JSON with error handling
+        # Parse JSON with error handling - Add better JSON extraction since we can't force JSON format
         plan = {}
         try:
-            plan = json.loads(content_text)
+            # Try to extract JSON from the response if it's wrapped in markdown or other text
+            clean_text = content_text.strip()
+            
+            # Remove markdown code fences if present
+            if clean_text.startswith('```json'):
+                clean_text = clean_text[7:]
+            elif clean_text.startswith('```'):
+                clean_text = clean_text[3:]
+            if clean_text.endswith('```'):
+                clean_text = clean_text[:-3]
+            
+            # Find JSON object boundaries
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                json_text = clean_text[start_idx:end_idx + 1]
+                plan = json.loads(json_text)
+            else:
+                plan = json.loads(clean_text)
+                
         except Exception as e:
             logger.warning(f"[Gemini] Plan JSON parse failed: {e}; returning fallback with raw text")
             plan = {
@@ -336,8 +355,7 @@ class GeminiClient:
                 ], generation_config={
                     "temperature": 0.2,
                     "max_output_tokens": 1024,
-                    # Force a clean JSON response
-                    "response_mime_type": "application/json",
+                    # REMOVED: "response_mime_type": "application/json", - This causes issues
                 })
                 break
             except Exception as e:
@@ -362,5 +380,27 @@ class GeminiClient:
                     content_text = resp.candidates[0].content.parts[0].text
             except Exception:
                 content_text = ""
+
+        # Clean up the response to extract JSON if it's wrapped in markdown or other text
+        try:
+            clean_text = content_text.strip()
+            
+            # Remove markdown code fences if present
+            if clean_text.startswith('```json'):
+                clean_text = clean_text[7:]
+            elif clean_text.startswith('```'):
+                clean_text = clean_text[3:]
+            if clean_text.endswith('```'):
+                clean_text = clean_text[:-3]
+            
+            # Find JSON object boundaries
+            start_idx = clean_text.find('{')
+            end_idx = clean_text.rfind('}')
+            
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                return clean_text[start_idx:end_idx + 1]
+                
+        except Exception as e:
+            logger.warning(f"[Gemini] Failed to clean response text: {e}")
 
         return content_text
