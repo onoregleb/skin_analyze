@@ -12,29 +12,13 @@ from app.tools.search_products import search_products
 
 logger = get_logger("gemini")
 
+# Упрощенный и более директивный промпт
 SYSTEM_PROMPT_PLAN = (
-    "You are an expert dermatology assistant. When analyzing skin conditions:\n"
-    "1. First, acknowledge and repeat the detailed MedGemma analysis to preserve all important observations\n"
-    "2. Then, provide your structured assessment in these categories:\n"
-    "   - Skin type (oily, dry, combination, normal)\n"
-    "   - Hydration level\n"
-    "   - Oil production\n"
-    "   - Texture analysis\n"
-    "   - Specific issues (acne, blackheads, etc.)\n"
-    "   - Signs of aging or sun damage\n"
-    "   - Skin barrier condition\n"
-    "   - Sensitivity indicators\n"
-    "3. ALWAYS generate a search query for relevant skincare products based on the analysis and CALL the tool 'search_products' with it.\n"
-    "4. After the tool result is provided back to you, produce a detailed JSON with keys:\n"
-    "   - medgemma_analysis: full text of the original analysis\n"
-    "   - skin_type: detailed skin type\n"
-    "   - diagnosis: your comprehensive analysis summary\n"
-    "   - concerns: list of specific concerns\n"
-    "   - deficiencies: list of missing elements\n"
-    "   - excesses: list of elements in excess\n"
-    "   - query: search query for products (REQUIRED)\n"
-    "   - need_search: true (ALWAYS true)\n"
-    "Output rules after tool response: Return a single valid JSON object ONLY, no markdown, no explanations, no code fences."
+    "You are an expert dermatology assistant. Your task is to:\n"
+    "1. Analyze the provided MedGemma skin analysis\n"
+    "2. IMMEDIATELY call the search_products tool with a relevant query based on the skin concerns identified\n"
+    "3. The search query should target specific skin issues mentioned in the analysis\n\n"
+    "IMPORTANT: You MUST call the search_products function in your first response."
 )
 
 SYSTEM_PROMPT_FINAL = (
@@ -47,18 +31,21 @@ SYSTEM_PROMPT_FINAL = (
     "- routine_steps: recommended skincare routine steps\n"
     "- products: list of up to 5 items {name,url,price?,snippet?,image_url?} with specific purpose for each\n"
     "- additional_recommendations: lifestyle and care tips\n"
-    "- medgemma_summary: include the full MedGemma analysis text for reference (mirror of medgemma_analysis if provided)\n"
+    "- medgemma_summary: include the full MedGemma analysis text for reference\n"
     "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences."
 )
 
+# Упрощенное объявление инструмента
 TOOL_DECLARATIONS = [{
     "name": "search_products",
-    "description": "Search skincare products on the web via Google Custom Search.",
+    "description": "Search for skincare products based on skin conditions",
     "parameters": {
         "type": "OBJECT",
         "properties": {
-            "query": {"type": "STRING"},
-            "num": {"type": "INTEGER"}
+            "query": {
+                "type": "STRING",
+                "description": "Search query for skincare products"
+            }
         },
         "required": ["query"]
     }
@@ -73,28 +60,42 @@ class GeminiClient:
         self.model_name = settings.gemini_model
 
     async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        # Prepare tool-enabled model for planning
+        # Создаем модель с инструментами
         model = genai.GenerativeModel(
             model_name=self.model_name,
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
             system_instruction=SYSTEM_PROMPT_PLAN
         )
 
-        user_parts = [
-            f"MedGemma Analysis:\n{medgemma_summary}\n\nUser note: {user_text or ''}"
-        ]
+        # Более прямое указание на необходимость вызвать функцию
+        user_message = (
+            f"Based on this MedGemma skin analysis, search for appropriate skincare products.\n\n"
+            f"MedGemma Analysis:\n{medgemma_summary}\n\n"
+            f"User note: {user_text or 'No additional notes'}\n\n"
+            f"Now call the search_products function with an appropriate query based on the skin issues identified."
+        )
 
-        # First turn: expect a function_call request
+        # Первая попытка с явным требованием вызвать функцию
         attempts = 0
         backoffs = [1, 2, 4]
         response = None
+        
         while attempts < 3:
             attempts += 1
             try:
+                # Используем более явную конфигурацию для вызова функции
                 response = model.generate_content(
-                    [{"role": "user", "parts": user_parts}],
-                    tool_config={"function_calling_config": {"mode": "ANY", "allowed_function_names": ["search_products"]}},
-                    generation_config={"temperature": 0.3, "max_output_tokens": 1024},
+                    user_message,
+                    tool_config={
+                        "function_calling_config": {
+                            "mode": "ANY",
+                            "allowed_function_names": ["search_products"]
+                        }
+                    },
+                    generation_config={
+                        "temperature": 0.1,  # Снижаем температуру для более предсказуемого поведения
+                        "max_output_tokens": 256  # Уменьшаем, так как нужен только вызов функции
+                    },
                 )
                 break
             except Exception as e:
@@ -107,256 +108,168 @@ class GeminiClient:
         if response is None:
             raise Exception("Failed to get response from Gemini after 3 attempts")
 
-        # Collect and execute tool calls
+        # Обработка вызовов функций
         collected_products: List[Dict[str, Any]] = []
         func_calls = []
-        parts = []
-        try:
-            parts = response.candidates[0].content.parts if response.candidates and response.candidates[0].content else []
-        except Exception as e:
-            logger.warning(f"[Gemini] Error accessing response parts: {e}")
-            parts = []
+        
+        # Проверяем, есть ли вызовы функций
+        if response.candidates:
+            for candidate in response.candidates:
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'function_call'):
+                            fc = part.function_call
+                            if fc.name == "search_products":
+                                args = dict(fc.args) if fc.args else {}
+                                query = args.get("query", "")
+                                
+                                logger.info(f"[Gemini] Tool call detected: search_products with query='{query}'")
+                                
+                                if query:
+                                    try:
+                                        products = await search_products(query=query, num=5)
+                                        collected_products = products
+                                        func_calls.append({
+                                            "name": "search_products",
+                                            "result": products,
+                                        })
+                                    except Exception as e:
+                                        logger.warning(f"[Gemini] Tool search_products failed: {e}")
 
-        # Also capture any text the model may have returned in the first turn (sometimes models output JSON instead of a function_call)
-        first_turn_text = ""
-        try:
-            first_turn_text = getattr(response, "text", None) or ""
-        except Exception:
-            pass
-        if not first_turn_text:
-            try:
-                if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                    # Prefer the first text part if present
-                    for _p in response.candidates[0].content.parts:
-                        t = getattr(_p, "text", None)
-                        if t:
-                            first_turn_text = t
-                            break
-            except Exception as e:
-                logger.warning(f"[Gemini] Error extracting first turn text: {e}")
-
-        for p in parts:
-            try:
-                fc = getattr(p, "function_call", None)
-                if fc and getattr(fc, "name", None) == "search_products":
-                    args = dict(fc.args or {})
-                    query = args.get("query", "")
-                    num = int(args.get("num", 5))
-                    logger.info(f"[Gemini] Executing tool search_products args={{'query': '{query}', 'num': {num}}}")
-                    try:
-                        products = await search_products(query=query, num=num)
-                    except Exception as e:
-                        logger.warning(f"[Gemini] Tool search_products failed: {e}")
-                        products = []
-                    collected_products = products
-                    func_calls.append({
-                        "name": "search_products",
-                        "result": products,
-                    })
-            except Exception as e:
-                logger.warning(f"[Gemini] Parse function_call error: {e}")
-
-        # If model did not call the tool, try to salvage a query from any JSON the model may have returned
+        # Если функция не была вызвана, используем fallback
         if not func_calls:
-            parsed_query = None
-            parsed_num = 5
+            # Извлекаем ключевые слова из анализа для формирования запроса
+            fallback_query = self._generate_fallback_query(medgemma_summary)
+            logger.info(f"[Gemini] No function call detected, using fallback query: {fallback_query}")
+            
             try:
-                if first_turn_text:
-                    parsed = json.loads(first_turn_text)
-                    if isinstance(parsed, dict):
-                        parsed_query = parsed.get("query") or parsed.get("search_query")
-                        if isinstance(parsed.get("num"), int):
-                            parsed_num = int(parsed.get("num"))
-            except Exception:
-                parsed_query = None
-
-            if parsed_query:
-                logger.info(f"[Gemini] No function call; using model-provided query for search_products: '{parsed_query}' (num={parsed_num})")
-                try:
-                    products = await search_products(query=parsed_query, num=parsed_num)
-                except Exception as e:
-                    logger.warning(f"[Gemini] search_products with model query failed: {e}")
-                    products = []
+                products = await search_products(query=fallback_query, num=5)
                 collected_products = products
                 func_calls.append({
                     "name": "search_products",
                     "result": products,
                 })
-
-        # If still no products, execute a heuristic fallback search to always provide products
-        if not func_calls:
-            default_query = "skincare products for acne blackheads dehydration"
-            try:
-                # derive a simple heuristic from the medgemma summary
-                low = (medgemma_summary or "").lower()
-                if "blackhead" in low:
-                    default_query = "skincare products for blackheads comedones"
-                elif "dehydrat" in low or "dry" in low:
-                    default_query = "skincare products for dehydrated skin"
-                elif "aging" in low or "fine line" in low:
-                    default_query = "anti-aging skincare products"
-            except Exception:
-                pass
-            logger.info(f"[Gemini] No function calls produced, running fallback search with query: {default_query}")
-            try:
-                products = await search_products(query=default_query, num=5)
             except Exception as e:
-                logger.warning(f"[Gemini] Fallback search_products failed: {e}")
+                logger.warning(f"[Gemini] Fallback search failed: {e}")
                 products = []
-            collected_products = products
-            func_calls.append({
-                "name": "search_products",
-                "result": products,
-            })
 
-        # Build follow-up contents: include the original user turn, the assistant turn with function_call, and then user turn with function_response
-        followup_contents = [
-            {"role": "user", "parts": user_parts},
-            # assistant turn: function_call
-            {"role": "model", "parts": response.candidates[0].content.parts},
-        ]
-
-        # Add user part which conveys the result of the function_call
-        for fc in func_calls:
-            # `function_response` part must be in a message with role "user" or "model"
-            # It's more logical to treat the function response as user informing the model
-            followup_contents.append({
-                "role": "user",
-                "parts": [
-                    {
-                        "function_response": {
-                            "name": fc["name"],
-                            "response": {
-                                "result": fc["result"]
-                            }
-                        }
-                    }
-                ]
-            })
-
-        # Now request final plan - REMOVED response_mime_type to fix the error
-        attempts = 0
-        followup = None
-        while attempts < 3:
-            attempts += 1
-            try:
-                followup = model.generate_content(
-                    followup_contents,
-                    generation_config={
-                        "temperature": 0.2,
-                        "max_output_tokens": 1024,
-                        # REMOVED: "response_mime_type": "application/json", - This was causing the error
-                    },
-                )
-                break
-            except Exception as e:
-                logger.warning(f"[Gemini] planning follow-up attempt {attempts} failed: {e}")
-                if attempts < 3:
-                    time.sleep(backoffs[attempts - 1])
-                else:
-                    raise
-
-        if followup is None:
-            raise Exception("Failed to get followup response from Gemini after 3 attempts")
-
-        # Extract content text
-        content_text = ""
-        try:
-            content_text = getattr(followup, "text", None) or ""
-        except Exception:
-            pass
-
-        if not content_text:
-            try:
-                if followup.candidates and followup.candidates[0].content and followup.candidates[0].content.parts:
-                    content_text = followup.candidates[0].content.parts[0].text
-            except Exception as e:
-                logger.warning(f"[Gemini] Error extracting text from candidates: {e}")
-                content_text = ""
-
-        if not content_text.strip():
-            logger.warning("[Gemini] Empty response from model, returning fallback plan")
-            fallback_plan = {
-                "skin_type": "unknown",
-                "diagnosis": "Automated skin analysis completed",
-                "concerns": ["See detailed MedGemma analysis"],
-                "deficiencies": [],
-                "excesses": [],
-                "query": "skincare products for acne blackheads dehydration",
-                "need_search": True,
-                "medgemma_analysis": medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary
-            }
-            logger.info(f"[Gemini] Fallback plan created need_search={fallback_plan.get('need_search')} skin_type={fallback_plan.get('skin_type')}")
-            return fallback_plan, collected_products
-
-        # Parse JSON with error handling - Add better JSON extraction since we can't force JSON format
-        plan = {}
-        try:
-            # Try to extract JSON from the response if it's wrapped in markdown or other text
-            clean_text = content_text.strip()
-            
-            # Remove markdown code fences if present
-            if clean_text.startswith('```json'):
-                clean_text = clean_text[7:]
-            elif clean_text.startswith('```'):
-                clean_text = clean_text[3:]
-            if clean_text.endswith('```'):
-                clean_text = clean_text[:-3]
-            
-            # Find JSON object boundaries
-            start_idx = clean_text.find('{')
-            end_idx = clean_text.rfind('}')
-            
-            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                json_text = clean_text[start_idx:end_idx + 1]
-                plan = json.loads(json_text)
-            else:
-                plan = json.loads(clean_text)
-                
-        except Exception as e:
-            logger.warning(f"[Gemini] Plan JSON parse failed: {e}; returning fallback with raw text")
-            plan = {
-                "skin_type": "unknown",
-                "diagnosis": content_text[:200] if content_text else "No detailed diagnosis available",
-                "concerns": ["See MedGemma analysis"],
-                "deficiencies": [],
-                "excesses": [],
-                "query": "",
-                "need_search": True,
-                "medgemma_analysis": medgemma_summary[:300] + "..." if len(medgemma_summary) > 300 else medgemma_summary
-            }
-
-        # Ensure required fields
-        plan.setdefault("skin_type", "unknown")
-        plan.setdefault("diagnosis", "Analysis completed")
-        plan.setdefault("concerns", [])
-        plan.setdefault("deficiencies", [])
-        plan.setdefault("excesses", [])
-        plan.setdefault("query", "")
-        plan.setdefault("need_search", True)
-        plan.setdefault("medgemma_analysis", medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary)
-
-        logger.info(f"[Gemini] Plan parsed need_search={plan.get('need_search')} skin_type={plan.get('skin_type')}")
+        # Формируем план на основе анализа и найденных продуктов
+        plan = self._create_plan_from_analysis(medgemma_summary, collected_products, fallback_query if not func_calls else "")
+        
+        logger.info(f"[Gemini] Plan created with {len(collected_products)} products")
         return plan, collected_products
 
+    def _generate_fallback_query(self, medgemma_summary: str) -> str:
+        """Генерирует поисковый запрос на основе анализа MedGemma"""
+        low = medgemma_summary.lower()
+        queries = []
+        
+        # Проверяем различные проблемы кожи
+        if "blackhead" in low or "comedone" in low:
+            queries.append("blackheads comedones treatment")
+        if "dehydrat" in low or "dry" in low:
+            queries.append("dehydrated skin moisturizer")
+        if "acne" in low or "pimple" in low or "pustule" in low:
+            queries.append("acne treatment products")
+        if "aging" in low or "fine line" in low or "wrinkle" in low:
+            queries.append("anti-aging skincare")
+        if "hyperpigmentation" in low or "dark spot" in low:
+            queries.append("hyperpigmentation treatment")
+        if "inflam" in low or "redness" in low:
+            queries.append("anti-inflammatory skincare")
+        if "oily" in low:
+            queries.append("oil control products")
+        
+        # Если нашли проблемы, объединяем первые 2-3
+        if queries:
+            return " ".join(queries[:2])
+        
+        # Дефолтный запрос
+        return "skincare products routine"
+
+    def _create_plan_from_analysis(self, medgemma_summary: str, products: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
+        """Создает план на основе анализа MedGemma"""
+        low = medgemma_summary.lower()
+        
+        # Определяем тип кожи
+        skin_type = "combination"
+        if "oily" in low and "dry" not in low:
+            skin_type = "oily"
+        elif "dry" in low and "oily" not in low:
+            skin_type = "dry"
+        elif "normal" in low:
+            skin_type = "normal"
+        elif "sensitive" in low:
+            skin_type = "sensitive"
+        
+        # Собираем проблемы
+        concerns = []
+        if "blackhead" in low or "comedone" in low:
+            concerns.append("blackheads and comedones")
+        if "dehydrat" in low:
+            concerns.append("dehydration")
+        if "acne" in low:
+            concerns.append("acne")
+        if "hyperpigmentation" in low:
+            concerns.append("hyperpigmentation")
+        if "aging" in low or "fine line" in low:
+            concerns.append("signs of aging")
+        if "inflam" in low or "redness" in low:
+            concerns.append("inflammation and redness")
+        
+        # Определяем недостатки и избытки
+        deficiencies = []
+        excesses = []
+        
+        if "dehydrat" in low or "dry" in low:
+            deficiencies.append("moisture")
+        if "dull" in low:
+            deficiencies.append("radiance")
+        if "barrier" in low and "compromised" in low:
+            deficiencies.append("barrier function")
+        
+        if "oily" in low or "sebum" in low:
+            excesses.append("sebum production")
+        if "comedone" in low:
+            excesses.append("clogged pores")
+        
+        # Формируем диагноз
+        diagnosis = medgemma_summary.split('\n')[0] if medgemma_summary else "Skin analysis completed"
+        if "Summary:" in diagnosis:
+            diagnosis = diagnosis.replace("**Summary:**", "").replace("**", "").strip()
+        
+        return {
+            "skin_type": skin_type,
+            "diagnosis": diagnosis[:500],
+            "concerns": concerns,
+            "deficiencies": deficiencies,
+            "excesses": excesses,
+            "query": query or " ".join(concerns[:2]) if concerns else "skincare products",
+            "need_search": True,
+            "medgemma_analysis": medgemma_summary
+        }
+
     def finalize_with_products(self, planning_json: str, products_jsonl: str) -> str:
+        """Финализирует ответ с продуктами"""
         model = genai.GenerativeModel(
             model_name=self.model_name,
             system_instruction=SYSTEM_PROMPT_FINAL,
         )
+        
         attempts = 0
         backoffs = [1, 2, 4]
         resp = None
+        
         while attempts < 3:
             attempts += 1
             try:
-                resp = model.generate_content([
-                    {"role": "user", "parts": [f"Plan: {planning_json}\nProducts: {products_jsonl}"]}
-                ], generation_config={
-                    "temperature": 0.2,
-                    "max_output_tokens": 1024,
-                    # REMOVED: "response_mime_type": "application/json", - This causes issues
-                })
+                resp = model.generate_content(
+                    f"Plan: {planning_json}\nProducts: {products_jsonl}",
+                    generation_config={
+                        "temperature": 0.2,
+                        "max_output_tokens": 1024,
+                    }
+                )
                 break
             except Exception as e:
                 logger.warning(f"[Gemini] finalize attempt {attempts} failed: {e}")
@@ -368,39 +281,47 @@ class GeminiClient:
         if resp is None:
             return "{}"
 
+        # Извлекаем текст из ответа
         content_text = ""
         try:
-            content_text = getattr(resp, "text", None) or ""
+            content_text = resp.text if hasattr(resp, 'text') else ""
         except Exception:
-            pass
+            if resp and resp.candidates:
+                try:
+                    content_text = resp.candidates[0].content.parts[0].text
+                except Exception:
+                    pass
 
         if not content_text:
+            return "{}"
+
+        # Очищаем JSON от markdown
+        return self._clean_json_response(content_text)
+
+    def _clean_json_response(self, text: str) -> str:
+        """Очищает JSON от markdown и других артефактов"""
+        clean_text = text.strip()
+        
+        # Удаляем markdown code fences
+        if clean_text.startswith('```json'):
+            clean_text = clean_text[7:]
+        elif clean_text.startswith('```'):
+            clean_text = clean_text[3:]
+        if clean_text.endswith('```'):
+            clean_text = clean_text[:-3]
+        
+        # Находим границы JSON объекта
+        start_idx = clean_text.find('{')
+        end_idx = clean_text.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            json_text = clean_text[start_idx:end_idx + 1]
+            # Проверяем валидность JSON
             try:
-                if resp.candidates and resp.candidates[0].content and resp.candidates[0].content.parts:
-                    content_text = resp.candidates[0].content.parts[0].text
-            except Exception:
-                content_text = ""
-
-        # Clean up the response to extract JSON if it's wrapped in markdown or other text
-        try:
-            clean_text = content_text.strip()
-            
-            # Remove markdown code fences if present
-            if clean_text.startswith('```json'):
-                clean_text = clean_text[7:]
-            elif clean_text.startswith('```'):
-                clean_text = clean_text[3:]
-            if clean_text.endswith('```'):
-                clean_text = clean_text[:-3]
-            
-            # Find JSON object boundaries
-            start_idx = clean_text.find('{')
-            end_idx = clean_text.rfind('}')
-            
-            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                return clean_text[start_idx:end_idx + 1]
-                
-        except Exception as e:
-            logger.warning(f"[Gemini] Failed to clean response text: {e}")
-
-        return content_text
+                json.loads(json_text)
+                return json_text
+            except json.JSONDecodeError:
+                pass
+        
+        # Если не удалось извлечь валидный JSON, возвращаем исходный текст
+        return clean_text
