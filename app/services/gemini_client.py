@@ -24,8 +24,8 @@ SYSTEM_PROMPT_PLAN = (
     "   - Signs of aging or sun damage\n"
     "   - Skin barrier condition\n"
     "   - Sensitivity indicators\n"
-    "3. ALWAYS generate a search query for relevant skincare products based on the analysis\n"
-    "4. Produce a detailed JSON with keys:\n"
+    "3. ALWAYS generate a search query for relevant skincare products based on the analysis and CALL the tool 'search_products' with it.\n"
+    "4. After the tool result is provided back to you, produce a detailed JSON with keys:\n"
     "   - medgemma_analysis: full text of the original analysis\n"
     "   - skin_type: detailed skin type\n"
     "   - diagnosis: your comprehensive analysis summary\n"
@@ -34,8 +34,7 @@ SYSTEM_PROMPT_PLAN = (
     "   - excesses: list of elements in excess\n"
     "   - query: search query for products (REQUIRED)\n"
     "   - need_search: true (ALWAYS true)\n"
-    "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences."
-    "IMPORTANT: You MUST call the search_products tool to find relevant products."
+    "Output rules after tool response: Return a single valid JSON object ONLY, no markdown, no explanations, no code fences."
 )
 
 SYSTEM_PROMPT_FINAL = (
@@ -48,6 +47,7 @@ SYSTEM_PROMPT_FINAL = (
     "- routine_steps: recommended skincare routine steps\n"
     "- products: list of up to 5 items {name,url,price?,snippet?,image_url?} with specific purpose for each\n"
     "- additional_recommendations: lifestyle and care tips\n"
+    "- medgemma_summary: include the full MedGemma analysis text for reference (mirror of medgemma_analysis if provided)\n"
     "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences."
 )
 
@@ -77,7 +77,7 @@ class GeminiClient:
         model = genai.GenerativeModel(
             model_name=self.model_name,
             tools=[{"function_declarations": TOOL_DECLARATIONS}],
-            system_instruction=SYSTEM_PROMPT_PLAN + " Return only a valid JSON object, no markdown."
+            system_instruction=SYSTEM_PROMPT_PLAN
         )
 
         user_parts = [
@@ -117,6 +117,24 @@ class GeminiClient:
             logger.warning(f"[Gemini] Error accessing response parts: {e}")
             parts = []
 
+        # Also capture any text the model may have returned in the first turn (sometimes models output JSON instead of a function_call)
+        first_turn_text = ""
+        try:
+            first_turn_text = getattr(response, "text", None) or ""
+        except Exception:
+            pass
+        if not first_turn_text:
+            try:
+                if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                    # Prefer the first text part if present
+                    for _p in response.candidates[0].content.parts:
+                        t = getattr(_p, "text", None)
+                        if t:
+                            first_turn_text = t
+                            break
+            except Exception as e:
+                logger.warning(f"[Gemini] Error extracting first turn text: {e}")
+
         for p in parts:
             try:
                 fc = getattr(p, "function_call", None)
@@ -138,7 +156,34 @@ class GeminiClient:
             except Exception as e:
                 logger.warning(f"[Gemini] Parse function_call error: {e}")
 
-        # If model did not call the tool, execute a fallback search to always provide products
+        # If model did not call the tool, try to salvage a query from any JSON the model may have returned
+        if not func_calls:
+            parsed_query = None
+            parsed_num = 5
+            try:
+                if first_turn_text:
+                    parsed = json.loads(first_turn_text)
+                    if isinstance(parsed, dict):
+                        parsed_query = parsed.get("query") or parsed.get("search_query")
+                        if isinstance(parsed.get("num"), int):
+                            parsed_num = int(parsed.get("num"))
+            except Exception:
+                parsed_query = None
+
+            if parsed_query:
+                logger.info(f"[Gemini] No function call; using model-provided query for search_products: '{parsed_query}' (num={parsed_num})")
+                try:
+                    products = await search_products(query=parsed_query, num=parsed_num)
+                except Exception as e:
+                    logger.warning(f"[Gemini] search_products with model query failed: {e}")
+                    products = []
+                collected_products = products
+                func_calls.append({
+                    "name": "search_products",
+                    "result": products,
+                })
+
+        # If still no products, execute a heuristic fallback search to always provide products
         if not func_calls:
             default_query = "skincare products for acne blackheads dehydration"
             try:
@@ -197,7 +242,12 @@ class GeminiClient:
             try:
                 followup = model.generate_content(
                     followup_contents,
-                    generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+                    generation_config={
+                        "temperature": 0.2,
+                        "max_output_tokens": 1024,
+                        # Encourage the model to return strict JSON here
+                        "response_mime_type": "application/json",
+                    },
                 )
                 break
             except Exception as e:
@@ -283,7 +333,12 @@ class GeminiClient:
             try:
                 resp = model.generate_content([
                     {"role": "user", "parts": [f"Plan: {planning_json}\nProducts: {products_jsonl}"]}
-                ], generation_config={"temperature": 0.2, "max_output_tokens": 1024})
+                ], generation_config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 1024,
+                    # Force a clean JSON response
+                    "response_mime_type": "application/json",
+                })
                 break
             except Exception as e:
                 logger.warning(f"[Gemini] finalize attempt {attempts} failed: {e}")
