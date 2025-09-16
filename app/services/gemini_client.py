@@ -72,7 +72,7 @@ class GeminiClient:
         genai.configure(api_key=settings.gemini_api_key)
         self.model_name = settings.gemini_model
 
-    async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> Dict[str, Any]:
+    async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         # Prepare tool-enabled model for planning
         model = genai.GenerativeModel(
             model_name=self.model_name,
@@ -252,7 +252,7 @@ class GeminiClient:
                 "medgemma_analysis": medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary
             }
             logger.info(f"[Gemini] Fallback plan created need_search={fallback_plan.get('need_search')} skin_type={fallback_plan.get('skin_type')}")
-            return fallback_plan
+            return fallback_plan, collected_products
 
         # Parse JSON with error handling
         plan = {}
@@ -282,7 +282,7 @@ class GeminiClient:
         plan.setdefault("medgemma_analysis", medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary)
         
         logger.info(f"[Gemini] Plan parsed need_search={plan.get('need_search')} skin_type={plan.get('skin_type')}")
-        return plan
+        return plan, collected_products
 
     def finalize_with_products(self, planning_json: str, products_jsonl: str) -> str:
         model = genai.GenerativeModel(
