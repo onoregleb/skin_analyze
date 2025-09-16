@@ -12,7 +12,7 @@ logger = get_logger("pipeline")
 
 
 async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Dict[str, Any]:
-    timings = {} 
+    timings = {}
 
     # Step 1: Visual analysis via MedGemma
     start_time = time.perf_counter()
@@ -38,27 +38,31 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
     logger.info(f"[TIMING] Gemini planning took {timings['gemini_plan_seconds']} seconds")
 
     # Step 3: Finalize answer with Gemini
-    # Prefer raw tool results from Gemini planning
+    # ✅ Передаём JSON-строки, получаем готовый dict
     start_time = time.perf_counter()
-    final_text = gemini.finalize_with_products(
+    final_gemini = gemini.finalize_with_products(
         json.dumps(planning, ensure_ascii=False),
         json.dumps(products, ensure_ascii=False)
     )
-
     gemini_finalize_time = time.perf_counter() - start_time
     timings["gemini_finalize_seconds"] = round(gemini_finalize_time, 2)
-    logger.info(f"[STEP 3] Gemini finalize raw output: {final_text}")
-    logger.info(f"[TIMING] Gemini finalize took {timings['gemini_finalize_seconds']} seconds")
+    logger.info(f"[STEP 3] Gemini finalize raw output: {json.dumps(final_gemini, ensure_ascii=False)}")
 
-    try:
-        final_gemini = json.loads(final_text)
-    except Exception as e:
-        logger.warning(f"[STEP 3] JSON parse failed: {e}, using fallback")
+    # ✅ НЕ ДЕЛАЕМ json.loads() — final_gemini уже dict!
+    # Проверяем, не вернул ли Gemini fallback
+    if (
+        final_gemini.get("diagnosis") == "Analysis failed"
+        or not final_gemini.get("products")
+    ):
+        logger.warning("[STEP 3] Using fallback values due to Gemini failure")
         final_gemini = {
             "diagnosis": planning.get("diagnosis", visual_summary[:200]),
             "skin_type": planning.get("skin_type", "unknown"),
-            "explanation": "Heuristic selection due to JSON parse fail.",
+            "explanation": "Heuristic selection due to Gemini failure.",
+            "routine_steps": [],
             "products": (products or [])[:5],
+            "additional_recommendations": "",
+            "medgemma_summary": visual_summary,
         }
 
     # Construct the final response with the desired order
@@ -67,7 +71,7 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
         "medgemma_summary": visual_summary,
         "products": products_list,
     }
-    # add the remaining fields from Gemini output except products
+    # Add remaining fields from Gemini output except products
     final_response.update({k: v for k, v in final_gemini.items() if k != "products"})
     final_response["timings"] = timings
 

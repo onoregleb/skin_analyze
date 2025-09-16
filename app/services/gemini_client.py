@@ -31,7 +31,8 @@ SYSTEM_PROMPT_FINAL = (
     "- products: list of up to 5 items {name,url,price?,snippet?,image_url?} with specific purpose for each\n"
     "- additional_recommendations: lifestyle and care tips\n"
     "- medgemma_summary: include the full MedGemma analysis text for reference\n"
-    "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences."
+    "STRICT OUTPUT REQUIREMENTS: Respond with a single valid JSON object ONLY, no markdown, no explanations, no code fences. "
+    "DO NOT wrap the JSON in ```json or any other format. DO NOT add any prefix or suffix. JUST THE JSON."
 )
 
 TOOL_DECLARATIONS = [{
@@ -283,17 +284,40 @@ class GeminiClient:
                 else:
                     raise
 
-        if not resp:
-            return self._fallback_response("Empty Gemini response")
+        if not resp or not resp.candidates:
+            return self._fallback_response("No candidates returned")
+
+        # Проверяем, не заблокирован ли ответ
+        candidate = resp.candidates[0]
+        if candidate.finish_reason != genai.types.FinishReason.STOP:
+            safety_reason = getattr(candidate.finish_reason, 'name', str(candidate.finish_reason))
+            logger.warning(f"[Gemini] Response blocked due to finish reason: {safety_reason}")
+            for rating in candidate.safety_ratings:
+                if rating.probability != genai.types.SafetyProbability.NEARLY_NONE:
+                    logger.warning(f"[Gemini] Safety rating: {rating.category} -> {rating.probability}")
+            return self._fallback_response(f"Response blocked: {safety_reason}")
+
+        # Теперь проверяем, есть ли части (parts)
+        if not candidate.content or not candidate.content.parts:
+            return self._fallback_response("No content parts in response")
+
+        # Извлекаем текст — теперь безопасно
+        content_text = ""
+        for part in candidate.content.parts:
+            if hasattr(part, "text"):
+                content_text += part.text
+            elif hasattr(part, "function_call"):  # На всякий случай — если вернёт функцию (хотя не должно)
+                logger.warning("[Gemini] Unexpected function call in finalize phase")
+
+        if not content_text.strip():
+            return self._fallback_response("Empty text content after parsing parts")
 
         try:
-            content_text = resp.text or ""
-            if not content_text.strip():
-                raise ValueError("Empty text")
             return json.loads(content_text)
-        except Exception as e:
+        except json.JSONDecodeError as e:
             logger.warning(f"[Gemini] finalize JSON parse failed: {e}")
-            return self._fallback_response(str(e))
+            logger.warning(f"[Gemini] Raw response: {content_text[:500]}...")
+            return self._fallback_response(f"JSON decode error: {str(e)}")
 
     def _fallback_response(self, reason: str) -> Dict[str, Any]:
         logger.error(f"[Gemini] Fallback finalize response due to: {reason}")
