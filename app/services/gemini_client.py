@@ -3,7 +3,7 @@ from typing import List, Dict, Any
 import json
 import time
 
-import google.generativeai as genai
+from google import genai
 
 from app.config import settings
 from app.utils.logging import get_logger
