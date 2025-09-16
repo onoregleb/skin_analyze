@@ -86,7 +86,7 @@ class GeminiClient:
                     config=types.GenerateContentConfig(
                         tools=[self.search_tool],
                         temperature=0.1,
-                        max_output_tokens=256,
+                        max_output_tokens=1024,
                     ),
                 )
                 break
@@ -271,8 +271,8 @@ class GeminiClient:
                     model=self.model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        temperature=0.2,
-                        max_output_tokens=1024,
+                        temperature=0.1,
+                        max_output_tokens=2048,
                         response_mime_type="application/json",
                         response_schema=schema,
                     ),
