@@ -3,15 +3,19 @@ from typing import List, Dict, Any
 import json
 import time
 
+# Импорты из нового SDK
 from google import genai
+from google.genai import types # Для типов из SDK
+# errors для обработки ошибок
+from google.genai import errors
 
 from app.config import settings
 from app.utils.logging import get_logger
 from app.tools.search_products import search_products
 
-
 logger = get_logger("gemini")
 
+# Системные промпты остаются без изменений
 SYSTEM_PROMPT_PLAN = (
     "You are an expert dermatology assistant. Your task is to:\n"
     "1. Analyze the provided MedGemma skin analysis\n"
@@ -35,41 +39,44 @@ SYSTEM_PROMPT_FINAL = (
     "DO NOT wrap the JSON in ```json or any other format. DO NOT add any prefix or suffix. JUST THE JSON."
 )
 
-TOOL_DECLARATIONS = [{
-    "name": "search_products",
-    "description": "Search for skincare products based on skin conditions",
-    "parameters": {
-        "type": "OBJECT",
-        "properties": {
-            "query": {
-                "type": "STRING",
-                "description": "Search query for skincare products"
-            }
-        },
-        "required": ["query"]
-    }
-}]
-
+# Объявления инструментов теперь используют типы из SDK
+TOOL_DECLARATIONS = [
+    types.FunctionDeclaration(
+        name="search_products",
+        description="Search for skincare products based on skin conditions",
+        parameters=types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "query": types.Schema(
+                    type=types.Type.STRING,
+                    description="Search query for skincare products"
+                )
+            },
+            required=["query"]
+        )
+    )
+]
 
 class GeminiClient:
     def __init__(self) -> None:
         if not settings.gemini_api_key:
             logger.warning("GEMINI_API_KEY is not set; Gemini calls will fail")
-        genai.configure(api_key=settings.gemini_api_key)
+        # Создание клиента с использованием нового SDK
+        self.client = genai.Client(api_key=settings.gemini_api_key)
         self.model_name = settings.gemini_model
 
     async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
-            tools=[{"function_declarations": TOOL_DECLARATIONS}],
-            system_instruction=SYSTEM_PROMPT_PLAN
-        )
+        # Используем клиент для доступа к моделям
+        model_instance = self.client.models # Это просто ссылка на модуль моделей
 
-        user_message = (
-            f"Based on this MedGemma skin analysis, search for appropriate skincare products.\n\n"
-            f"MedGemma Analysis:\n{medgemma_summary}\n\n"
-            f"User note: {user_text or 'No additional notes'}\n\n"
-            f"Now call the search_products function with an appropriate query based on the skin issues identified."
+        user_message_content = types.Content(
+            role='user',
+            parts=[types.Part.from_text(text=(
+                f"Based on this MedGemma skin analysis, search for appropriate skincare products.\n\n"
+                f"MedGemma Analysis:\n{medgemma_summary}\n\n"
+                f"User note: {user_text or 'No additional notes'}\n\n"
+                f"Now call the search_products function with an appropriate query based on the skin issues identified."
+            ))]
         )
 
         attempts, response = 0, None
@@ -78,22 +85,32 @@ class GeminiClient:
         while attempts < 3:
             attempts += 1
             try:
-                response = model.generate_content(
-                    user_message,
-                    tool_config={
-                        "function_calling_config": {
-                            "mode": "ANY",
-                            "allowed_function_names": ["search_products"]
-                        }
-                    },
-                    generation_config={
-                        "temperature": 0.1,
-                        "max_output_tokens": 256
-                    },
+                # Используем generate_content из нового SDK
+                response = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=user_message_content,
+                    config=types.GenerateContentConfig(
+                        tools=TOOL_DECLARATIONS, # Передаем список FunctionDeclaration
+                        tool_config=types.ToolConfig(
+                            function_calling_config=types.FunctionCallingConfig(
+                                mode=types.FunctionCallingConfigMode.ANY,
+                                allowed_function_names=["search_products"]
+                            )
+                        ),
+                        system_instruction=SYSTEM_PROMPT_PLAN,
+                        temperature=0.1,
+                        max_output_tokens=256
+                    ),
                 )
                 break
+            except errors.APIError as e: # Обработка ошибок из SDK
+                 logger.warning(f"[Gemini] planning first turn attempt {attempts} failed with APIError: {e}")
+                 if attempts < 3:
+                     time.sleep(backoffs[attempts - 1])
+                 else:
+                     raise
             except Exception as e:
-                logger.warning(f"[Gemini] planning first turn attempt {attempts} failed: {e}")
+                logger.warning(f"[Gemini] planning first turn attempt {attempts} failed with general error: {e}")
                 if attempts < 3:
                     time.sleep(backoffs[attempts - 1])
                 else:
@@ -105,11 +122,13 @@ class GeminiClient:
         collected_products: List[Dict[str, Any]] = []
         func_calls = []
 
+        # Обработка ответа и вызов инструментов
         if response.candidates:
             for candidate in response.candidates:
                 if candidate.content and candidate.content.parts:
                     for part in candidate.content.parts:
-                        if hasattr(part, "function_call"):
+                        # Проверяем, является ли часть вызовом функции
+                        if hasattr(part, "function_call") and part.function_call:
                             fc = part.function_call
                             if fc.name == "search_products":
                                 args = dict(fc.args) if fc.args else {}
@@ -118,6 +137,7 @@ class GeminiClient:
 
                                 if query:
                                     try:
+                                        # Выполняем асинхронный вызов внешней функции
                                         products = await search_products(query=query, num=5)
                                         collected_products = products
                                         func_calls.append({
@@ -127,6 +147,7 @@ class GeminiClient:
                                     except Exception as e:
                                         logger.warning(f"[Gemini] Tool search_products failed: {e}")
 
+        # Если инструмент не был вызван, используем резервный вариант
         if not func_calls:
             fallback_query = self._generate_fallback_query(medgemma_summary)
             logger.info(f"[Gemini] No function call detected, using fallback query: {fallback_query}")
@@ -151,6 +172,7 @@ class GeminiClient:
         return plan, collected_products
 
     def _generate_fallback_query(self, medgemma_summary: str) -> str:
+        # Логика резервного запроса остается без изменений
         low = medgemma_summary.lower()
         queries = []
 
@@ -175,6 +197,7 @@ class GeminiClient:
         return "skincare products routine"
 
     def _create_plan_from_analysis(self, medgemma_summary: str, products: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
+        # Логика создания плана остается без изменений
         low = medgemma_summary.lower()
         skin_type = "combination"
 
@@ -228,38 +251,34 @@ class GeminiClient:
             "medgemma_analysis": medgemma_summary
         }
 
-    def finalize_with_products(self, planning_json: str, products_jsonl: str) -> Dict[str, Any]:
-        model = genai.GenerativeModel(
-            model_name=self.model_name,
-            system_instruction=SYSTEM_PROMPT_FINAL,
-        )
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "diagnosis": {"type": "string"},
-                "skin_type": {"type": "string"},
-                "explanation": {"type": "string"},
-                "routine_steps": {"type": "array", "items": {"type": "string"}},
-                "products": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "url": {"type": "string"},
-                            "price": {"type": "string"},
-                            "snippet": {"type": "string"},
-                            "image_url": {"type": "string"},
+    async def finalize_with_products(self, planning_json: str, products_jsonl: str) -> Dict[str, Any]:
+        # Определение схемы ответа с использованием типов SDK
+        response_schema = types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "diagnosis": types.Schema(type=types.Type.STRING),
+                "skin_type": types.Schema(type=types.Type.STRING),
+                "explanation": types.Schema(type=types.Type.STRING),
+                "routine_steps": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
+                "products": types.Schema(
+                    type=types.Type.ARRAY,
+                    items=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "name": types.Schema(type=types.Type.STRING),
+                            "url": types.Schema(type=types.Type.STRING),
+                            "price": types.Schema(type=types.Type.STRING),
+                            "snippet": types.Schema(type=types.Type.STRING),
+                            "image_url": types.Schema(type=types.Type.STRING),
                         },
-                        "required": ["name", "url"],
-                    },
-                },
-                "additional_recommendations": {"type": "string"},
-                "medgemma_summary": {"type": "string"},
+                        required=["name", "url"],
+                    ),
+                ),
+                "additional_recommendations": types.Schema(type=types.Type.STRING),
+                "medgemma_summary": types.Schema(type=types.Type.STRING),
             },
-            "required": ["diagnosis", "skin_type", "explanation", "products", "medgemma_summary"],
-        }
+            required=["diagnosis", "skin_type", "explanation", "products", "medgemma_summary"],
+        )
 
         attempts, resp = 0, None
         backoffs = [1, 2, 4]
@@ -267,18 +286,27 @@ class GeminiClient:
         while attempts < 3:
             attempts += 1
             try:
-                resp = model.generate_content(
-                    [f"Plan: {planning_json}\nProducts: {products_jsonl}"],
-                    generation_config={
-                        "temperature": 0.2,
-                        "max_output_tokens": 1024,
-                        "response_mime_type": "application/json",
-                        "response_schema": schema,
-                    },
+                # Используем асинхронный метод generate_content из нового SDK
+                resp = await self.client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=f"Plan: {planning_json}\nProducts: {products_jsonl}",
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT_FINAL,
+                        temperature=0.2,
+                        max_output_tokens=1024,
+                        response_mime_type='application/json',
+                        response_schema=response_schema,
+                    ),
                 )
                 break
+            except errors.APIError as e: # Обработка ошибок из SDK
+                logger.warning(f"[Gemini] finalize attempt {attempts} failed with APIError: {e}")
+                if attempts < 3:
+                    time.sleep(backoffs[attempts - 1])
+                else:
+                    raise
             except Exception as e:
-                logger.warning(f"[Gemini] finalize attempt {attempts} failed: {e}")
+                logger.warning(f"[Gemini] finalize attempt {attempts} failed with general error: {e}")
                 if attempts < 3:
                     time.sleep(backoffs[attempts - 1])
                 else:
@@ -289,11 +317,14 @@ class GeminiClient:
 
         # Проверяем, не заблокирован ли ответ
         candidate = resp.candidates[0]
-        if candidate.finish_reason != genai.FinishReason.STOP:
-            safety_reason = getattr(candidate.finish_reason, 'name', str(candidate.finish_reason))
+        # Используем FinishReason из types
+        if candidate.finish_reason != types.FinishReason.STOP:
+            # Получаем имя причины завершения
+            safety_reason = candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else str(candidate.finish_reason)
             logger.warning(f"[Gemini] Response blocked due to finish reason: {safety_reason}")
+            # Используем SafetyRating из types
             for rating in candidate.safety_ratings:
-                if rating.probability != genai.SafetyProbability.NEARLY_NONE:
+                if rating.probability != types.HarmProbability.NEARLY_NONE:
                     logger.warning(f"[Gemini] Safety rating: {rating.category} -> {rating.probability}")
             return self._fallback_response(f"Response blocked: {safety_reason}")
 
@@ -320,6 +351,7 @@ class GeminiClient:
             return self._fallback_response(f"JSON decode error: {str(e)}")
 
     def _fallback_response(self, reason: str) -> Dict[str, Any]:
+        # Резервный ответ остается без изменений
         logger.error(f"[Gemini] Fallback finalize response due to: {reason}")
         return {
             "diagnosis": "Analysis failed",
