@@ -86,7 +86,6 @@ class GeminiClient:
 
         # First turn: expect a function_call request
         attempts = 0
-        last_error: Exception | None = None
         backoffs = [1, 2, 4]
         response = None
         while attempts < 3:
@@ -99,28 +98,25 @@ class GeminiClient:
                 )
                 break
             except Exception as e:
-                last_error = e
                 logger.warning(f"[Gemini] planning first turn attempt {attempts} failed: {e}")
                 if attempts < 3:
-                    try:
-                        time.sleep(backoffs[attempts - 1])
-                    except Exception:
-                        pass
+                    time.sleep(backoffs[attempts - 1])
                 else:
                     raise
 
-        if not response:
+        if response is None:
             raise Exception("Failed to get response from Gemini after 3 attempts")
 
         # Collect and execute tool calls
         collected_products: List[Dict[str, Any]] = []
-        func_calls: List[Dict[str, Any]] = []
+        func_calls = []
+        parts = []
         try:
             parts = response.candidates[0].content.parts if response.candidates and response.candidates[0].content else []
         except Exception as e:
             logger.warning(f"[Gemini] Error accessing response parts: {e}")
             parts = []
-            
+
         for p in parts:
             try:
                 fc = getattr(p, "function_call", None)
@@ -137,69 +133,72 @@ class GeminiClient:
                     collected_products = products
                     func_calls.append({
                         "name": "search_products",
-                        "response": {"name": "search_products", "content": products},
+                        "result": products,
                     })
             except Exception as e:
                 logger.warning(f"[Gemini] Parse function_call error: {e}")
 
+        # Build follow-up contents: include the original user turn, the assistant turn with function_call, and then user turn with function_response
+        followup_contents = [
+            {"role": "user", "parts": user_parts},
+            # assistant turn: function_call
+            {"role": "model", "parts": response.candidates[0].content.parts},
+        ]
 
-        # Build a follow-up turn including the assistant function_call and our tool responses
-        tool_parts = [{
-            "function_response": {
-                "name": fc["name"],
-                "response": {
-                    "result": fc["response"]["content"]
-                }
-            }
-        } for fc in func_calls]
+        # Add user part which conveys the result of the function_call
+        for fc in func_calls:
+            # `function_response` part must be in a message with role "user" or "model"
+            # It's more logical to treat the function response as user informing the model
+            followup_contents.append({
+                "role": "user",
+                "parts": [
+                    {
+                        "function_response": {
+                            "name": fc["name"],
+                            "response": {
+                                "result": fc["result"]
+                            }
+                        }
+                    }
+                ]
+            })
 
-        # Continue conversation to get final structured JSON plan
+        # Now request final plan
         attempts = 0
-        last_error = None
         followup = None
         while attempts < 3:
             attempts += 1
             try:
                 followup = model.generate_content(
-                    [
-                        {"role": "user", "parts": user_parts},
-                        response.candidates[0].content,
-                        {"role": "tool", "parts": tool_parts},
-                    ],
+                    followup_contents,
                     generation_config={"temperature": 0.2, "max_output_tokens": 1024},
                 )
                 break
             except Exception as e:
-                last_error = e
                 logger.warning(f"[Gemini] planning follow-up attempt {attempts} failed: {e}")
                 if attempts < 3:
-                    try:
-                        time.sleep(backoffs[attempts - 1])
-                    except Exception:
-                        pass
+                    time.sleep(backoffs[attempts - 1])
                 else:
                     raise
 
-        if not followup:
+        if followup is None:
             raise Exception("Failed to get followup response from Gemini after 3 attempts")
 
-        # Extract content text with safety checks
+        # Extract content text
         content_text = ""
         try:
             content_text = getattr(followup, "text", None) or ""
         except Exception:
             pass
-            
+
         if not content_text:
             try:
-                # Some SDK versions require extracting from candidates
                 if followup.candidates and followup.candidates[0].content and followup.candidates[0].content.parts:
                     content_text = followup.candidates[0].content.parts[0].text
             except Exception as e:
                 logger.warning(f"[Gemini] Error extracting text from candidates: {e}")
                 content_text = ""
 
-        # Handle empty response
         if not content_text.strip():
             logger.warning("[Gemini] Empty response from model, returning fallback plan")
             fallback_plan = {
@@ -231,7 +230,7 @@ class GeminiClient:
                 "need_search": True,
                 "medgemma_analysis": medgemma_summary[:300] + "..." if len(medgemma_summary) > 300 else medgemma_summary
             }
-        
+
         # Ensure required fields
         plan.setdefault("skin_type", "unknown")
         plan.setdefault("diagnosis", "Analysis completed")
@@ -241,7 +240,7 @@ class GeminiClient:
         plan.setdefault("query", "")
         plan.setdefault("need_search", True)
         plan.setdefault("medgemma_analysis", medgemma_summary[:500] + "..." if len(medgemma_summary) > 500 else medgemma_summary)
-        
+
         logger.info(f"[Gemini] Plan parsed need_search={plan.get('need_search')} skin_type={plan.get('skin_type')}")
         return plan, collected_products
 
@@ -251,7 +250,6 @@ class GeminiClient:
             system_instruction=SYSTEM_PROMPT_FINAL,
         )
         attempts = 0
-        last_error: Exception | None = None
         backoffs = [1, 2, 4]
         resp = None
         while attempts < 3:
@@ -262,31 +260,26 @@ class GeminiClient:
                 ], generation_config={"temperature": 0.2, "max_output_tokens": 1024})
                 break
             except Exception as e:
-                last_error = e
                 logger.warning(f"[Gemini] finalize attempt {attempts} failed: {e}")
                 if attempts < 3:
-                    try:
-                        time.sleep(backoffs[attempts - 1])
-                    except Exception:
-                        pass
+                    time.sleep(backoffs[attempts - 1])
                 else:
                     raise
 
-        if not resp:
+        if resp is None:
             return "{}"
 
-        # Extract content text with safety checks
         content_text = ""
         try:
             content_text = getattr(resp, "text", None) or ""
         except Exception:
             pass
-            
+
         if not content_text:
             try:
                 if resp.candidates and resp.candidates[0].content and resp.candidates[0].content.parts:
                     content_text = resp.candidates[0].content.parts[0].text
             except Exception:
                 content_text = ""
-        
+
         return content_text
