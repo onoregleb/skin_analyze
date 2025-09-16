@@ -3,11 +3,8 @@ from typing import List, Dict, Any
 import json
 import time
 
-# Импорты из нового SDK
 from google import genai
-from google.genai import types # Для типов из SDK
-# errors для обработки ошибок
-from google.genai import errors
+from google.genai import types
 
 from app.config import settings
 from app.utils.logging import get_logger
@@ -15,7 +12,6 @@ from app.tools.search_products import search_products
 
 logger = get_logger("gemini")
 
-# Системные промпты остаются без изменений
 SYSTEM_PROMPT_PLAN = (
     "You are an expert dermatology assistant. Your task is to:\n"
     "1. Analyze the provided MedGemma skin analysis\n"
@@ -39,44 +35,42 @@ SYSTEM_PROMPT_FINAL = (
     "DO NOT wrap the JSON in ```json or any other format. DO NOT add any prefix or suffix. JUST THE JSON."
 )
 
-# Объявления инструментов теперь используют типы из SDK
-TOOL_DECLARATIONS = [
-    types.FunctionDeclaration(
-        name="search_products",
-        description="Search for skincare products based on skin conditions",
-        parameters=types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "query": types.Schema(
-                    type=types.Type.STRING,
-                    description="Search query for skincare products"
-                )
-            },
-            required=["query"]
-        )
-    )
-]
+# Function declaration JSON schema used by SDK
+SEARCH_PRODUCTS_FUNCTION = types.FunctionDeclaration(
+    name="search_products",
+    description="Search for skincare products based on skin conditions",
+    parameters={
+        "type": "OBJECT",
+        "properties": {
+            "query": {"type": "STRING", "description": "Search query for skincare products"}
+        },
+        "required": ["query"],
+    },
+)
 
 class GeminiClient:
     def __init__(self) -> None:
         if not settings.gemini_api_key:
             logger.warning("GEMINI_API_KEY is not set; Gemini calls will fail")
-        # Создание клиента с использованием нового SDK
+
+        # Create a central client (sync + async available via client.aio)
+        # For Gemini Developer API, use api_key param
         self.client = genai.Client(api_key=settings.gemini_api_key)
         self.model_name = settings.gemini_model
 
-    async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        # Используем клиент для доступа к моделям
-        model_instance = self.client.models # Это просто ссылка на модуль моделей
+        # create a Tool wrapper for function-calling usage
+        self.search_tool = types.Tool(function_declarations=[SEARCH_PRODUCTS_FUNCTION])
 
-        user_message_content = types.Content(
-            role='user',
-            parts=[types.Part.from_text(text=(
-                f"Based on this MedGemma skin analysis, search for appropriate skincare products.\n\n"
-                f"MedGemma Analysis:\n{medgemma_summary}\n\n"
-                f"User note: {user_text or 'No additional notes'}\n\n"
-                f"Now call the search_products function with an appropriate query based on the skin issues identified."
-            ))]
+    async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        """
+        First stage: ask model to analyze medgemma_summary and (ideally) call search_products.
+        We declare the function via types.Tool and inspect response.function_calls for invocation.
+        """
+        user_message = (
+            f"Based on this MedGemma skin analysis, search for appropriate skincare products.\n\n"
+            f"MedGemma Analysis:\n{medgemma_summary}\n\n"
+            f"User note: {user_text or 'No additional notes'}\n\n"
+            f"Now call the search_products function with an appropriate query based on the skin issues identified."
         )
 
         attempts, response = 0, None
@@ -85,32 +79,19 @@ class GeminiClient:
         while attempts < 3:
             attempts += 1
             try:
-                # Используем generate_content из нового SDK
+                # async call
                 response = await self.client.aio.models.generate_content(
                     model=self.model_name,
-                    contents=user_message_content,
+                    contents=user_message,
                     config=types.GenerateContentConfig(
-                        tools=TOOL_DECLARATIONS, # Передаем список FunctionDeclaration
-                        tool_config=types.ToolConfig(
-                            function_calling_config=types.FunctionCallingConfig(
-                                mode=types.FunctionCallingConfigMode.ANY,
-                                allowed_function_names=["search_products"]
-                            )
-                        ),
-                        system_instruction=SYSTEM_PROMPT_PLAN,
+                        tools=[self.search_tool],
                         temperature=0.1,
-                        max_output_tokens=256
+                        max_output_tokens=256,
                     ),
                 )
                 break
-            except errors.APIError as e: # Обработка ошибок из SDK
-                 logger.warning(f"[Gemini] planning first turn attempt {attempts} failed with APIError: {e}")
-                 if attempts < 3:
-                     time.sleep(backoffs[attempts - 1])
-                 else:
-                     raise
             except Exception as e:
-                logger.warning(f"[Gemini] planning first turn attempt {attempts} failed with general error: {e}")
+                logger.warning(f"[Gemini] planning first turn attempt {attempts} failed: {e}")
                 if attempts < 3:
                     time.sleep(backoffs[attempts - 1])
                 else:
@@ -122,32 +103,28 @@ class GeminiClient:
         collected_products: List[Dict[str, Any]] = []
         func_calls = []
 
-        # Обработка ответа и вызов инструментов
-        if response.candidates:
-            for candidate in response.candidates:
-                if candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        # Проверяем, является ли часть вызовом функции
-                        if hasattr(part, "function_call") and part.function_call:
-                            fc = part.function_call
-                            if fc.name == "search_products":
-                                args = dict(fc.args) if fc.args else {}
-                                query = args.get("query", "")
-                                logger.info(f"[Gemini] Tool call detected: search_products with query='{query}'")
+        # The SDK exposes function calls in response.function_calls (list)
+        function_calls = getattr(response, "function_calls", None)
+        if function_calls:
+            # take the first function call (model decided to call our tool)
+            fc = function_calls[0]
+            func_name = getattr(fc, "name", None)
+            args = getattr(fc, "args", {}) or {}
+            if func_name == "search_products":
+                query = args.get("query", "")
+                logger.info(f"[Gemini] Tool call detected: search_products with query='{query}'")
+                if query:
+                    try:
+                        products = await search_products(query=query, num=5)
+                        collected_products = products
+                        func_calls.append({
+                            "name": "search_products",
+                            "result": products,
+                        })
+                    except Exception as e:
+                        logger.warning(f"[Gemini] Tool search_products failed: {e}")
 
-                                if query:
-                                    try:
-                                        # Выполняем асинхронный вызов внешней функции
-                                        products = await search_products(query=query, num=5)
-                                        collected_products = products
-                                        func_calls.append({
-                                            "name": "search_products",
-                                            "result": products,
-                                        })
-                                    except Exception as e:
-                                        logger.warning(f"[Gemini] Tool search_products failed: {e}")
-
-        # Если инструмент не был вызван, используем резервный вариант
+        # Fallback: if model did not call function, generate fallback query and perform search
         if not func_calls:
             fallback_query = self._generate_fallback_query(medgemma_summary)
             logger.info(f"[Gemini] No function call detected, using fallback query: {fallback_query}")
@@ -165,14 +142,13 @@ class GeminiClient:
         plan = self._create_plan_from_analysis(
             medgemma_summary,
             collected_products,
-            "" if func_calls else fallback_query,
+            "" if func_calls else (fallback_query if 'fallback_query' in locals() else ""),
         )
 
         logger.info(f"[Gemini] Plan created with {len(collected_products)} products")
         return plan, collected_products
 
     def _generate_fallback_query(self, medgemma_summary: str) -> str:
-        # Логика резервного запроса остается без изменений
         low = medgemma_summary.lower()
         queries = []
 
@@ -197,7 +173,6 @@ class GeminiClient:
         return "skincare products routine"
 
     def _create_plan_from_analysis(self, medgemma_summary: str, products: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
-        # Логика создания плана остается без изменений
         low = medgemma_summary.lower()
         skin_type = "combination"
 
@@ -251,94 +226,77 @@ class GeminiClient:
             "medgemma_analysis": medgemma_summary
         }
 
-    async def finalize_with_products(self, planning_json: str, products_jsonl: str) -> Dict[str, Any]:
-        # Определение схемы ответа с использованием типов SDK
-        response_schema = types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                "diagnosis": types.Schema(type=types.Type.STRING),
-                "skin_type": types.Schema(type=types.Type.STRING),
-                "explanation": types.Schema(type=types.Type.STRING),
-                "routine_steps": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
-                "products": types.Schema(
-                    type=types.Type.ARRAY,
-                    items=types.Schema(
-                        type=types.Type.OBJECT,
-                        properties={
-                            "name": types.Schema(type=types.Type.STRING),
-                            "url": types.Schema(type=types.Type.STRING),
-                            "price": types.Schema(type=types.Type.STRING),
-                            "snippet": types.Schema(type=types.Type.STRING),
-                            "image_url": types.Schema(type=types.Type.STRING),
+    def finalize_with_products(self, planning_json: str, products_jsonl: str) -> Dict[str, Any]:
+        """
+        Second stage: combine planning + product search results and ask model to produce a single JSON.
+        This is using the sync client.models.generate_content so it can be called from sync code.
+        """
+        # Create the response schema (you can keep using dict-based JSON schema; SDK accepts it)
+        schema = {
+            "type": "object",
+            "properties": {
+                "diagnosis": {"type": "string"},
+                "skin_type": {"type": "string"},
+                "explanation": {"type": "string"},
+                "routine_steps": {"type": "array", "items": {"type": "string"}},
+                "products": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "url": {"type": "string"},
+                            "price": {"type": "string"},
+                            "snippet": {"type": "string"},
+                            "image_url": {"type": "string"},
                         },
-                        required=["name", "url"],
-                    ),
-                ),
-                "additional_recommendations": types.Schema(type=types.Type.STRING),
-                "medgemma_summary": types.Schema(type=types.Type.STRING),
+                        "required": ["name", "url"],
+                    },
+                },
+                "additional_recommendations": {"type": "string"},
+                "medgemma_summary": {"type": "string"},
             },
-            required=["diagnosis", "skin_type", "explanation", "products", "medgemma_summary"],
-        )
+            "required": ["diagnosis", "skin_type", "explanation", "products", "medgemma_summary"],
+        }
 
         attempts, resp = 0, None
         backoffs = [1, 2, 4]
 
+        prompt = f"Plan: {planning_json}\nProducts: {products_jsonl}"
+
         while attempts < 3:
             attempts += 1
             try:
-                # Используем асинхронный метод generate_content из нового SDK
-                resp = await self.client.aio.models.generate_content(
+                resp = self.client.models.generate_content(
                     model=self.model_name,
-                    contents=f"Plan: {planning_json}\nProducts: {products_jsonl}",
+                    contents=prompt,
                     config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT_FINAL,
                         temperature=0.2,
                         max_output_tokens=1024,
-                        response_mime_type='application/json',
-                        response_schema=response_schema,
+                        response_mime_type="application/json",
+                        response_schema=schema,
                     ),
                 )
                 break
-            except errors.APIError as e: # Обработка ошибок из SDK
-                logger.warning(f"[Gemini] finalize attempt {attempts} failed with APIError: {e}")
-                if attempts < 3:
-                    time.sleep(backoffs[attempts - 1])
-                else:
-                    raise
             except Exception as e:
-                logger.warning(f"[Gemini] finalize attempt {attempts} failed with general error: {e}")
+                logger.warning(f"[Gemini] finalize attempt {attempts} failed: {e}")
                 if attempts < 3:
                     time.sleep(backoffs[attempts - 1])
                 else:
                     raise
 
-        if not resp or not resp.candidates:
-            return self._fallback_response("No candidates returned")
+        if not resp:
+            return self._fallback_response("No response returned")
 
-        # Проверяем, не заблокирован ли ответ
-        candidate = resp.candidates[0]
-        # Используем FinishReason из types
-        if candidate.finish_reason != types.FinishReason.STOP:
-            # Получаем имя причины завершения
-            safety_reason = candidate.finish_reason.name if hasattr(candidate.finish_reason, 'name') else str(candidate.finish_reason)
-            logger.warning(f"[Gemini] Response blocked due to finish reason: {safety_reason}")
-            # Используем SafetyRating из types
-            for rating in candidate.safety_ratings:
-                if rating.probability != types.HarmProbability.NEARLY_NONE:
-                    logger.warning(f"[Gemini] Safety rating: {rating.category} -> {rating.probability}")
-            return self._fallback_response(f"Response blocked: {safety_reason}")
-
-        # Теперь проверяем, есть ли части (parts)
-        if not candidate.content or not candidate.content.parts:
-            return self._fallback_response("No content parts in response")
-
-        # Извлекаем текст — теперь безопасно
-        content_text = ""
-        for part in candidate.content.parts:
-            if hasattr(part, "text"):
-                content_text += part.text
-            elif hasattr(part, "function_call"):  # На всякий случай — если вернёт функцию (хотя не должно)
-                logger.warning("[Gemini] Unexpected function call in finalize phase")
+        # Try to parse response.text (SDK exposes combined text via .text)
+        content_text = getattr(resp, "text", None)
+        if not content_text:
+            # Try to grab first candidate textual content as fallback
+            try:
+                candidate = resp.candidates[0]
+                content_text = getattr(candidate, "text", "") or ""
+            except Exception:
+                content_text = ""
 
         if not content_text.strip():
             return self._fallback_response("Empty text content after parsing parts")
@@ -347,11 +305,10 @@ class GeminiClient:
             return json.loads(content_text)
         except json.JSONDecodeError as e:
             logger.warning(f"[Gemini] finalize JSON parse failed: {e}")
-            logger.warning(f"[Gemini] Raw response: {content_text[:500]}...")
+            logger.warning(f"[Gemini] Raw response: {content_text[:1000]}...")
             return self._fallback_response(f"JSON decode error: {str(e)}")
 
     def _fallback_response(self, reason: str) -> Dict[str, Any]:
-        # Резервный ответ остается без изменений
         logger.error(f"[Gemini] Fallback finalize response due to: {reason}")
         return {
             "diagnosis": "Analysis failed",
