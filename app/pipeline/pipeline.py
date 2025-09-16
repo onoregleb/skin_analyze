@@ -25,7 +25,7 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
     # Step 2: Planning with Gemini using tool calling
     gemini = GeminiClient()
     start_time = time.perf_counter()
-    planning = await gemini.plan_with_tool(visual_summary, user_text)
+    planning, products = await gemini.plan_with_tool(visual_summary, user_text)
     gemini_plan_time = time.perf_counter() - start_time
     timings["gemini_plan_seconds"] = round(gemini_plan_time, 2)
     logger.info(f"[STEP 2] Gemini planning result: {json.dumps(planning, ensure_ascii=False)}")
@@ -45,22 +45,26 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
     logger.info(f"[TIMING] Gemini finalize took {timings['gemini_finalize_seconds']} seconds")
 
     try:
-        final = json.loads(final_text)
+        final_gemini = json.loads(final_text)
     except Exception as e:
         logger.warning(f"[STEP 3] JSON parse failed: {e}, using fallback")
-        final = {
+        final_gemini = {
             "diagnosis": planning.get("diagnosis", visual_summary[:200]),
             "skin_type": planning.get("skin_type", "unknown"),
             "explanation": "Heuristic selection due to JSON parse fail.",
             "products": products[:5],
         }
 
-    final["products"] = (final.get("products") or [])[:5]
-    # Add intermediate visibility fields
-    final["medgemma_summary"] = visual_summary
-    final["timings"] = timings 
-    
-    logger.info(f"[STEP 3] Final response: {json.dumps(final, ensure_ascii=False)}")
+    # Construct the final response with the desired order
+    final_response = {
+        "medgemma_summary": visual_summary
+    }
+    final_response.update(final_gemini)
+
+    final_response["products"] = (final_response.get("products") or [])[:5]
+    final_response["timings"] = timings
+
+    logger.info(f"[STEP 3] Final response: {json.dumps(final_response, ensure_ascii=False)}")
     logger.info(f"[OVERALL TIMING] Total pipeline time: {timings['medgemma_seconds'] + timings['gemini_plan_seconds'] + timings['gemini_finalize_seconds']:.2f} seconds")
 
-    return final
+    return final_response
