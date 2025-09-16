@@ -25,7 +25,13 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
     # Step 2: Planning with Gemini using tool calling
     gemini = GeminiClient()
     start_time = time.perf_counter()
-    planning, products = await gemini.plan_with_tool(visual_summary, user_text)
+    products = []
+    planning_result = await gemini.plan_with_tool(visual_summary, user_text)
+    if isinstance(planning_result, tuple) and len(planning_result) == 2:
+        planning, products = planning_result
+    else:
+        planning = planning_result or {}
+        products = products or []
     gemini_plan_time = time.perf_counter() - start_time
     timings["gemini_plan_seconds"] = round(gemini_plan_time, 2)
     logger.info(f"[STEP 2] Gemini planning result: {json.dumps(planning, ensure_ascii=False)}")
@@ -52,16 +58,17 @@ async def analyze_skin_pipeline(image: Image.Image, user_text: str | None) -> Di
             "diagnosis": planning.get("diagnosis", visual_summary[:200]),
             "skin_type": planning.get("skin_type", "unknown"),
             "explanation": "Heuristic selection due to JSON parse fail.",
-            "products": products[:5],
+            "products": (products or [])[:5],
         }
 
     # Construct the final response with the desired order
+    products_list = (final_gemini.get("products") or products or [])[:5]
     final_response = {
-        "medgemma_summary": visual_summary
+        "medgemma_summary": visual_summary,
+        "products": products_list,
     }
-    final_response.update(final_gemini)
-
-    final_response["products"] = (final_response.get("products") or [])[:5]
+    # add the remaining fields from Gemini output except products
+    final_response.update({k: v for k, v in final_gemini.items() if k != "products"})
     final_response["timings"] = timings
 
     logger.info(f"[STEP 3] Final response: {json.dumps(final_response, ensure_ascii=False)}")

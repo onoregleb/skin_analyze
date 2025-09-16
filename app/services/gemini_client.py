@@ -138,6 +138,32 @@ class GeminiClient:
             except Exception as e:
                 logger.warning(f"[Gemini] Parse function_call error: {e}")
 
+        # If model did not call the tool, execute a fallback search to always provide products
+        if not func_calls:
+            default_query = "skincare products for acne blackheads dehydration"
+            try:
+                # derive a simple heuristic from the medgemma summary
+                low = (medgemma_summary or "").lower()
+                if "blackhead" in low:
+                    default_query = "skincare products for blackheads comedones"
+                elif "dehydrat" in low or "dry" in low:
+                    default_query = "skincare products for dehydrated skin"
+                elif "aging" in low or "fine line" in low:
+                    default_query = "anti-aging skincare products"
+            except Exception:
+                pass
+            logger.info(f"[Gemini] No function calls produced, running fallback search with query: {default_query}")
+            try:
+                products = await search_products(query=default_query, num=5)
+            except Exception as e:
+                logger.warning(f"[Gemini] Fallback search_products failed: {e}")
+                products = []
+            collected_products = products
+            func_calls.append({
+                "name": "search_products",
+                "result": products,
+            })
+
         # Build follow-up contents: include the original user turn, the assistant turn with function_call, and then user turn with function_response
         followup_contents = [
             {"role": "user", "parts": user_parts},

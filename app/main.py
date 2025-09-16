@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
+from typing import Any
 import base64
 import io
 from PIL import Image
@@ -205,7 +206,13 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
         from app.services.gemini_client import GeminiClient  # local import to avoid startup latency
         gemini = GeminiClient()
         start_time = asyncio.get_running_loop().time()
-        planning = await gemini.plan_with_tool(visual_summary, user_text)
+        products: list[dict[str, Any]] = []  # ensure defined
+        planning_result = await gemini.plan_with_tool(visual_summary, user_text)
+        if isinstance(planning_result, tuple) and len(planning_result) == 2:
+            planning, products = planning_result
+        else:
+            planning = planning_result or {}
+            products = products or []
         gemini_plan_time = asyncio.get_running_loop().time() - start_time
         timings["gemini_plan_seconds"] = round(gemini_plan_time, 2)
         job_manager.update_progress(job_id, {"planning": planning, "timings": timings})
@@ -226,7 +233,7 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
                 "diagnosis": planning.get("diagnosis", visual_summary[:200]),
                 "skin_type": planning.get("skin_type", "unknown"),
                 "explanation": "Heuristic selection due to JSON parse fail.",
-                "products": products[:5],
+                "products": (products or [])[:5],
             }
 
         # Normalize output like pipeline
