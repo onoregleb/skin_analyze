@@ -23,6 +23,7 @@ cache/
 # Build
 build/
 dist/
+Dockerfile.vllm
 
 # OS
 .DS_Store
