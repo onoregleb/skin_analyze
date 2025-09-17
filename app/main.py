@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, HTTPException, Body
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
@@ -129,22 +129,17 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
 
 
 @app.post("/v1/skin-analysis")
-async def skin_analysis_start(
-    image_url: str | None = Form(default=None),
-    text: str | None = Form(default=None),
-    mode: str = Form(default="basic"),
-    body: SkinAnalysisRequest | None = Body(default=None),
-):
+async def skin_analysis_start(body: SkinAnalysisRequest):
     """
     Начать анализ кожи
     
     Принимает изображение по URL и запускает фоновую задачу анализа.
     
     Args:
-        image_url: URL изображения (обязательный параметр)
-        text: Дополнительное описание (опционально)
-        mode: Режим анализа ("basic" или "extended", по умолчанию "basic")
-        body: JSON тело запроса (альтернативный способ передачи параметров)
+        body: JSON тело запроса с параметрами:
+            - image_url: URL изображения (обязательный параметр)
+            - text: Дополнительное описание (опционально)
+            - mode: Режим анализа ("basic" или "extended", по умолчанию "basic")
     
     Returns:
         job_id: ID задачи для отслеживания статуса
@@ -152,32 +147,18 @@ async def skin_analysis_start(
         mode: Выбранный режим анализа
     """
     try:
-        # Определяем параметры из form или body
-        if body:
-            img_url = body.image_url
-            user_text = body.text
-            analysis_mode = body.mode
-        else:
-            img_url = image_url
-            user_text = text
-            analysis_mode = mode
-
-        # Проверяем наличие URL изображения
-        if not img_url:
-            raise HTTPException(status_code=400, detail="image_url is required")
-
         # Нормализуем режим
-        mode_norm = (analysis_mode or "basic").strip().lower()
+        mode_norm = (body.mode or "basic").strip().lower()
         if mode_norm not in {"basic", "extended"}:
             mode_norm = "basic"
 
         # Получаем изображение по URL
-        image_bytes = await _fetch_image_from_url(img_url)
+        image_bytes = await _fetch_image_from_url(body.image_url)
         pil_image = await _bytes_to_image(image_bytes)
 
         # Создаем background job
         job = job_manager.create()
-        asyncio.create_task(_run_analysis_job(job.id, pil_image, user_text, mode_norm))
+        asyncio.create_task(_run_analysis_job(job.id, pil_image, body.text, mode_norm))
         
         return {
             "job_id": job.id, 
