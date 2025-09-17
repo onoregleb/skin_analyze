@@ -1,9 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Body
+from fastapi import FastAPI, Form, HTTPException, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ValidationError
 from typing import Any
-import base64
 import io
 from PIL import Image
 import httpx
@@ -20,8 +19,7 @@ logger = get_logger("app")
 
 
 class SkinAnalysisRequest(BaseModel):
-    image_url: str | None = None
-    image_b64: str | None = None
+    image_url: str
     text: str | None = None
     mode: str = "basic"
 
@@ -132,7 +130,6 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
 
 @app.post("/v1/skin-analysis")
 async def skin_analysis_start(
-    image_b64: str | None = Form(default=None),
     image_url: str | None = Form(default=None),
     text: str | None = Form(default=None),
     mode: str = Form(default="basic"),
@@ -141,11 +138,10 @@ async def skin_analysis_start(
     """
     Начать анализ кожи
     
-    Принимает изображение в виде base64 или URL и запускает фоновую задачу анализа.
+    Принимает изображение по URL и запускает фоновую задачу анализа.
     
     Args:
-        image_b64: Изображение в формате base64
-        image_url: URL изображения
+        image_url: URL изображения (обязательный параметр)
         text: Дополнительное описание (опционально)
         mode: Режим анализа ("basic" или "extended", по умолчанию "basic")
         body: JSON тело запроса (альтернативный способ передачи параметров)
@@ -158,33 +154,25 @@ async def skin_analysis_start(
     try:
         # Определяем параметры из form или body
         if body:
-            img_b64 = body.image_b64
             img_url = body.image_url
             user_text = body.text
             analysis_mode = body.mode
         else:
-            img_b64 = image_b64
             img_url = image_url
             user_text = text
             analysis_mode = mode
+
+        # Проверяем наличие URL изображения
+        if not img_url:
+            raise HTTPException(status_code=400, detail="image_url is required")
 
         # Нормализуем режим
         mode_norm = (analysis_mode or "basic").strip().lower()
         if mode_norm not in {"basic", "extended"}:
             mode_norm = "basic"
 
-        # Получаем изображение (приоритет: base64 > URL)
-        image_bytes: bytes | None = None
-        if img_b64:
-            try:
-                image_bytes = base64.b64decode(img_b64)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Invalid base64 image: {e}")
-        elif img_url:
-            image_bytes = await _fetch_image_from_url(img_url)
-        else:
-            raise HTTPException(status_code=400, detail="Provide image_b64 or image_url")
-
+        # Получаем изображение по URL
+        image_bytes = await _fetch_image_from_url(img_url)
         pil_image = await _bytes_to_image(image_bytes)
 
         # Создаем background job
