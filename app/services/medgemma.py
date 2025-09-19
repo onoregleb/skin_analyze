@@ -50,7 +50,18 @@ class MedGemmaService:
         return cls._instance
 
     @classmethod
-    async def analyze_image(cls, image: Image.Image, mode: str = "extended") -> str:
+    async def analyze_image(cls, image: Image.Image, mode: str = "extended", user_text: str | None = None) -> str:
+        """
+        Анализ изображения кожи с учетом дополнительного текста пользователя
+        
+        Args:
+            image: PIL изображение для анализа
+            mode: режим анализа ("basic" или "extended")
+            user_text: дополнительный текст от пользователя с описанием проблем/вопросов
+        
+        Returns:
+            Текстовый анализ изображения
+        """
         if cls._pipe is None:
             cls()
 
@@ -66,34 +77,50 @@ class MedGemmaService:
                 "Summary: a brief 1-2 sentence overview of the skin condition.\n"
                 "Description (basic): a short paragraph (3-6 sentences) focusing on key observations and main concerns."
             )
-            prompt_user = (
-                "Please analyze this skin image. Keep it concise and approachable.\n"
-                "Respond using the two sections: 'Summary:' and 'Description (basic):'."
-            )
+            
+            # Базовый промпт для пользователя
+            prompt_user = "Please analyze this skin image. Keep it concise and approachable.\n"
+            
+            # Добавляем пользовательский текст если есть
+            if user_text and user_text.strip():
+                prompt_user += f"\nAdditional context from user: {user_text.strip()}\n"
+                prompt_user += "Please consider this information in your analysis.\n"
+            
+            prompt_user += "Respond using the two sections: 'Summary:' and 'Description (basic):'."
+            
         else:  # extended
             prompt_system = (
-                            """You are an expert dermatologist. 
-            Provide a detailed analysis of the skin condition using professional terminology. 
-            Focus on:
-            - Skin type and texture
-            - Hydration levels and barrier function
-            - Sebum production and pore condition
-            - Presence of any lesions, inflammation, or acne
-            - Pigmentation and color uniformity
-            - Signs of aging or photodamage
-            - Visible blood vessels or redness
-            - Any abnormal formations or concerning features"""                          
+                """You are an expert dermatologist. 
+Provide a detailed analysis of the skin condition using professional terminology. 
+Focus on:
+- Skin type and texture
+- Hydration levels and barrier function
+- Sebum production and pore condition
+- Presence of any lesions, inflammation, or acne
+- Pigmentation and color uniformity
+- Signs of aging or photodamage
+- Visible blood vessels or redness
+- Any abnormal formations or concerning features"""                          
             )
+            
             prompt_user = (
                 """Please analyze this skin image in detail. 
 Describe all visible characteristics and potential concerns.
 Include both surface-level observations and potential underlying conditions.
 Use medical terminology where appropriate, but ensure the description remains understandable.
-Be specific about locations and severity of any issues observed.
-Respond using the two sections: 'Summary:' and 'Description (extended):'.""" )
+Be specific about locations and severity of any issues observed."""
+            )
+            
+            # Добавляем пользовательский текст если есть
+            if user_text and user_text.strip():
+                prompt_user += f"\n\nAdditional context from user: {user_text.strip()}"
+                prompt_user += "\nPlease address the user's specific concerns and questions in your analysis."
+            
+            prompt_user += "\nRespond using the two sections: 'Summary:' and 'Description (extended):'."
 
         logger.info(f"[MedGemma] Mode: {mode_norm}")
-
+        if user_text and user_text.strip():
+            logger.info(f"[MedGemma] User text provided: {user_text[:100]}...")
         logger.info(f"[MedGemma] Image size: {image.size}")
 
         messages = [
@@ -113,6 +140,7 @@ Respond using the two sections: 'Summary:' and 'Description (extended):'.""" )
         output = cls._pipe(text=messages, max_new_tokens=settings.medgemma_max_new_tokens)
         generated = output[0].get("generated_text")
         response = ""
+        
         # Case 1: generated_text is a plain string
         if isinstance(generated, str):
             response = generated.strip()
@@ -129,6 +157,7 @@ Respond using the two sections: 'Summary:' and 'Description (extended):'.""" )
             response = "\n".join([t.strip() for t in texts if t and t.strip()])
         else:
             response = ""
+            
         logger.info(f"[MedGemma] Output: {response}")
         return response
 

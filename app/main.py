@@ -22,7 +22,6 @@ from app.services.supabase_service import (
     RecommendedProduct
 )
 
-
 app = FastAPI(title="Skin Analyze API", version="0.1.1")
 logger = get_logger("app")
 
@@ -90,13 +89,13 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
             progress={"step": "starting_analysis"}
         ))
         
-        # Step 1: MedGemma
+        # Step 1: MedGemma - ИСПРАВЛЕНО: передаем user_text
         mode_norm = (mode or "basic").strip().lower()
         if mode_norm not in {"basic", "extended"}:
             mode_norm = "basic"
             
         start_time = asyncio.get_running_loop().time()
-        visual_summary = await MedGemmaService.analyze_image(image, mode=mode_norm)
+        visual_summary = await MedGemmaService.analyze_image(image, mode=mode_norm, user_text=user_text)
         medgemma_time = asyncio.get_running_loop().time() - start_time
         timings["medgemma_seconds"] = round(medgemma_time, 2)
         
@@ -108,10 +107,10 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
         ))
 
         # Step 2: Gemini planning with tool
-        from app.services.gemini_client import GeminiClient
+        from app.services.gemini_client import GeminiClient  # local import to avoid startup latency
         gemini = GeminiClient()
         start_time = asyncio.get_running_loop().time()
-        products: list[dict[str, Any]] = []
+        products: list[dict[str, Any]] = []  # ensure defined
         planning_result = await gemini.plan_with_tool(visual_summary, user_text)
         
         if isinstance(planning_result, tuple) and len(planning_result) == 2:
@@ -148,7 +147,7 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
                 "products": (products or [])[:5],
             }
 
-        # Normalize output
+        # Normalize output like pipeline
         final["products"] = (final.get("products") or [])[:5]
         final["medgemma_summary"] = visual_summary
         final["timings"] = timings
@@ -204,6 +203,19 @@ async def _run_analysis_job(job_id: str, image: Image.Image, user_text: str | No
 async def skin_analysis_start(body: SkinAnalysisRequest):
     """
     Начать анализ кожи с сохранением в Supabase
+    
+    Принимает изображение по URL и запускает фоновую задачу анализа.
+    
+    Args:
+        body: JSON тело запроса с параметрами:
+            - image_url: URL изображения (обязательный параметр)
+            - text: Дополнительное описание проблем от пользователя (опционально)
+            - mode: Режим анализа ("basic" или "extended", по умолчанию "basic")
+    
+    Returns:
+        job_id: ID задачи для отслеживания статуса
+        status: Текущий статус задачи
+        mode: Выбранный режим анализа
     """
     try:
         # Нормализуем режим
@@ -302,3 +314,38 @@ async def get_analysis_result(job_id: str):
         raise HTTPException(status_code=500, detail="Stored result schema error")
     
     return JSONResponse(content=validated.model_dump())
+
+
+# Дополнительный endpoint для получения результата из Supabase
+@app.get("/v1/skin-analysis/full-result/{job_id}")
+async def get_full_analysis_result(job_id: str):
+    """
+    Получить полный результат анализа кожи из Supabase
+    
+    Args:
+        job_id: ID задачи, полученный из /v1/skin-analysis
+    
+    Returns:
+        Полный результат анализа включая все данные из базы
+    """
+    result = await supabase_service.get_full_analysis_result(job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Analysis result not found")
+    
+    return result
+
+
+# Endpoint для очистки старых задач (опционально)
+@app.delete("/v1/admin/cleanup-old-jobs")
+async def cleanup_old_jobs(days: int = 30):
+    """
+    Удалить старые задачи из базы данных
+    
+    Args:
+        days: Количество дней для хранения задач (по умолчанию 30)
+    
+    Returns:
+        Количество удаленных задач
+    """
+    deleted_count = await supabase_service.cleanup_old_jobs(days)
+    return {"deleted_jobs": deleted_count}
