@@ -24,7 +24,6 @@ RUN pip install --no-cache-dir \
         safetensors \
         fastapi \
         uvicorn \
-        python-multipart \
         pydantic \
         hf_transfer
 
