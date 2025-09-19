@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import List, Dict, Any
 import json
 import time
+import asyncio
 
 from google import genai
 from google.genai import types
@@ -15,9 +16,10 @@ logger = get_logger("gemini")
 SYSTEM_PROMPT_PLAN = (
     "You are an expert dermatology assistant. Your task is to:\n"
     "1. Analyze the provided MedGemma skin analysis\n"
-    "2. IMMEDIATELY call the search_products tool with a relevant query based on the skin concerns identified\n"
-    "3. The search query should target specific skin issues mentioned in the analysis\n\n"
-    "IMPORTANT: You MUST call the search_products function in your first response."
+    "2. Call the search_products tool MULTIPLE TIMES (2-3 calls) with SPECIFIC, FOCUSED queries\n"
+    "3. Each search query should target ONE specific skin issue or product type\n"
+    "4. Use targeted queries like 'acne cleanser', 'anti-aging serum', 'moisturizer dry skin' instead of long combined queries\n\n"
+    "IMPORTANT: You MUST call the search_products function MULTIPLE TIMES with different focused queries."
 )
 
 SYSTEM_PROMPT_FINAL = (
@@ -63,114 +65,142 @@ class GeminiClient:
 
     async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
-        First stage: ask model to analyze medgemma_summary and (ideally) call search_products.
-        We declare the function via types.Tool and inspect response.function_calls for invocation.
+        First stage: ask model to analyze medgemma_summary and call search_products multiple times.
+        We use multiple rounds of conversation to encourage multiple tool calls.
         """
         user_message = (
             f"Based on this MedGemma skin analysis, search for appropriate skincare products.\n\n"
             f"MedGemma Analysis:\n{medgemma_summary}\n\n"
             f"User note: {user_text or 'No additional notes'}\n\n"
-            f"Now call the search_products function with an appropriate query based on the skin issues identified."
+            f"Please call the search_products function multiple times (2-3 times) with specific, focused queries. "
+            f"Each query should target a specific skin concern or product type (e.g., 'acne cleanser', 'anti-aging serum', 'moisturizer for dry skin')."
         )
-
-        attempts, response = 0, None
-        backoffs = [1, 2, 4]
-
-        while attempts < 3:
-            attempts += 1
-            try:
-                # async call
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=user_message,
-                    config=types.GenerateContentConfig(
-                        tools=[self.search_tool],
-                        temperature=0.1,
-                        max_output_tokens=1024,
-                    ),
-                )
-                break
-            except Exception as e:
-                logger.warning(f"[Gemini] planning first turn attempt {attempts} failed: {e}")
-                if attempts < 3:
-                    time.sleep(backoffs[attempts - 1])
-                else:
-                    raise
-
-        if response is None:
-            raise Exception("Failed to get response from Gemini after 3 attempts")
 
         collected_products: List[Dict[str, Any]] = []
-        func_calls = []
+        conversation_history = [user_message]
+        
+        # Пытаемся получить множественные вызовы через многоходовую беседу
+        max_rounds = 3
+        for round_num in range(max_rounds):
+            attempts, response = 0, None
+            backoffs = [1, 2, 4]
 
-        # The SDK exposes function calls in response.function_calls (list)
-        function_calls = getattr(response, "function_calls", None)
-        if function_calls:
-            # take the first function call (model decided to call our tool)
-            fc = function_calls[0]
-            func_name = getattr(fc, "name", None)
-            args = getattr(fc, "args", {}) or {}
-            if func_name == "search_products":
-                query = args.get("query", "")
-                logger.info(f"[Gemini] Tool call detected: search_products with query='{query}'")
-                if query:
-                    try:
-                        products = await search_products(query=query, num=5)
-                        collected_products = products
-                        func_calls.append({
-                            "name": "search_products",
-                            "result": products,
-                        })
-                    except Exception as e:
-                        logger.warning(f"[Gemini] Tool search_products failed: {e}")
+            while attempts < 3:
+                attempts += 1
+                try:
+                    # async call
+                    response = await self.client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=conversation_history[-1] if round_num == 0 else "Please make another search for a different skin concern from the analysis.",
+                        config=types.GenerateContentConfig(
+                            tools=[self.search_tool],
+                            temperature=0.1,
+                            max_output_tokens=1024,
+                        ),
+                    )
+                    break
+                except Exception as e:
+                    logger.warning(f"[Gemini] planning round {round_num+1} attempt {attempts} failed: {e}")
+                    if attempts < 3:
+                        time.sleep(backoffs[attempts - 1])
+                    else:
+                        if round_num == 0:  # Только первый раунд критичен
+                            raise
+                        else:
+                            logger.warning(f"[Gemini] Skipping round {round_num+1} due to errors")
+                            break
 
-        # Fallback: if model did not call function, generate fallback query and perform search
-        if not func_calls:
-            fallback_query = self._generate_fallback_query(medgemma_summary)
-            logger.info(f"[Gemini] No function call detected, using fallback query: {fallback_query}")
+            if response is None:
+                if round_num == 0:
+                    raise Exception("Failed to get response from Gemini after 3 attempts")
+                continue
+
+            # Process function calls from this round
+            function_calls = getattr(response, "function_calls", None)
+            if function_calls:
+                for fc in function_calls:
+                    func_name = getattr(fc, "name", None)
+                    args = getattr(fc, "args", {}) or {}
+                    if func_name == "search_products":
+                        query = args.get("query", "")
+                        logger.info(f"[Gemini] Round {round_num+1} Tool call: search_products with query='{query}'")
+                        if query:
+                            try:
+                                products = await search_products(query=query, num=3)  # Меньше продуктов на запрос
+                                collected_products.extend(products)
+                            except Exception as e:
+                                logger.warning(f"[Gemini] Tool search_products failed in round {round_num+1}: {e}")
+
+            # Если модель не вызвала функции, добавляем подсказку для следующего раунда
+            if not function_calls and round_num < max_rounds - 1:
+                conversation_history.append("Please search for skincare products for another skin concern mentioned in the analysis.")
+
+        # Если все же не получили достаточно вызовов, делаем fallback множественные поиски
+        if len(collected_products) < 3:
+            fallback_queries = self._generate_multiple_fallback_queries(medgemma_summary)
+            logger.info(f"[Gemini] Using fallback queries: {fallback_queries}")
+            
+            # Выполняем параллельно несколько поисков
+            search_tasks = [search_products(query=q, num=2) for q in fallback_queries[:3]]
             try:
-                products = await search_products(query=fallback_query, num=5)
-                collected_products = products
-                func_calls.append({
-                    "name": "search_products",
-                    "result": products,
-                })
+                fallback_results = await asyncio.gather(*search_tasks, return_exceptions=True)
+                for i, result in enumerate(fallback_results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"[Gemini] Fallback search {i+1} failed: {result}")
+                    else:
+                        collected_products.extend(result)
             except Exception as e:
-                logger.warning(f"[Gemini] Fallback search failed: {e}")
-                collected_products = []
+                logger.warning(f"[Gemini] Fallback searches failed: {e}")
 
-        plan = self._create_plan_from_analysis(
-            medgemma_summary,
-            collected_products,
-            "" if func_calls else (fallback_query if 'fallback_query' in locals() else ""),
-        )
+        # Убираем дубликаты по URL
+        seen_urls = set()
+        unique_products = []
+        for product in collected_products:
+            if product.get('url') and product['url'] not in seen_urls:
+                seen_urls.add(product['url'])
+                unique_products.append(product)
+        
+        collected_products = unique_products[:10]  # Ограничиваем до 10 продуктов
 
-        logger.info(f"[Gemini] Plan created with {len(collected_products)} products")
+        plan = self._create_plan_from_analysis(medgemma_summary, collected_products, "multiple focused searches")
+
+        logger.info(f"[Gemini] Plan created with {len(collected_products)} products from multiple searches")
         return plan, collected_products
 
-    def _generate_fallback_query(self, medgemma_summary: str) -> str:
+    def _generate_multiple_fallback_queries(self, medgemma_summary: str) -> List[str]:
+        """Генерирует несколько целенаправленных запросов на основе анализа кожи"""
         low = medgemma_summary.lower()
         queries = []
 
-        if "blackhead" in low or "comedone" in low:
-            queries.append("blackheads comedones treatment")
+        # Основные категории продуктов
+        if "blackhead" in low or "comedone" in low or "pore" in low:
+            queries.append("pore cleansing treatment")
         if "dehydrat" in low or "dry" in low:
-            queries.append("dehydrated skin moisturizer")
+            queries.append("hydrating moisturizer")
         if "acne" in low or "pimple" in low or "pustule" in low:
-            queries.append("acne treatment products")
+            queries.append("acne treatment serum")
         if "aging" in low or "fine line" in low or "wrinkle" in low:
-            queries.append("anti-aging skincare")
-        if "hyperpigmentation" in low or "dark spot" in low:
-            queries.append("hyperpigmentation treatment")
-        if "inflam" in low or "redness" in low:
-            queries.append("anti-inflammatory skincare")
-        if "oily" in low:
+            queries.append("anti-aging cream")
+        if "hyperpigmentation" in low or "dark spot" in low or "sun damage" in low:
+            queries.append("brightening serum")
+        if "inflam" in low or "redness" in low or "irritat" in low:
+            queries.append("soothing skincare")
+        if "oily" in low or "sebum" in low:
             queries.append("oil control products")
+        if "sensitive" in low:
+            queries.append("gentle skincare")
 
-        if queries:
-            return " ".join(queries[:2])
+        # Если ничего специфического не найдено, используем базовые категории
+        if not queries:
+            queries = ["facial cleanser", "moisturizer", "sunscreen"]
 
-        return "skincare products routine"
+        # Возвращаем максимум 4 запроса
+        return queries[:4]
+
+    def _generate_fallback_query(self, medgemma_summary: str) -> str:
+        """Оставляем для совместимости, но теперь используется редко"""
+        queries = self._generate_multiple_fallback_queries(medgemma_summary)
+        return " ".join(queries[:2]) if queries else "skincare products routine"
 
     def _create_plan_from_analysis(self, medgemma_summary: str, products: List[Dict[str, Any]], query: str) -> Dict[str, Any]:
         low = medgemma_summary.lower()
@@ -221,7 +251,7 @@ class GeminiClient:
             "concerns": concerns,
             "deficiencies": deficiencies,
             "excesses": excesses,
-            "query": query or " ".join(concerns[:2]) if concerns else "skincare products",
+            "query": query,
             "need_search": True,
             "medgemma_analysis": medgemma_summary
         }

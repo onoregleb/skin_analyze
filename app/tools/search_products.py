@@ -27,7 +27,7 @@ async def search_products(query: str, num: int = 10) -> List[Dict[str, Any]]:
         attempts += 1
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(GOOGLE_SEARCH_URL.strip(), params=params)  # Убрал лишний пробел
+                resp = await client.get(GOOGLE_SEARCH_URL.strip(), params=params)
                 resp.raise_for_status()
                 data = resp.json()
                 items = data.get("items", [])
