@@ -9,7 +9,7 @@ from google.genai import types
 
 from app.config import settings
 from app.utils.logging import get_logger
-from app.tools.search_products import search_products
+from app.services.product_search_client import ProductSearchClient
 
 logger = get_logger("gemini")
 
@@ -62,6 +62,9 @@ class GeminiClient:
 
         # create a Tool wrapper for function-calling usage
         self.search_tool = types.Tool(function_declarations=[SEARCH_PRODUCTS_FUNCTION])
+
+        # Initialize product search client
+        self.product_search_client = ProductSearchClient()
 
     async def plan_with_tool(self, medgemma_summary: str, user_text: str | None) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
@@ -126,7 +129,7 @@ class GeminiClient:
                         logger.info(f"[Gemini] Round {round_num+1} Tool call: search_products with query='{query}'")
                         if query:
                             try:
-                                products = await search_products(query=query, num=3)  # Меньше продуктов на запрос
+                                products = await self.product_search_client.search_products(query=query, num=3)  # Меньше продуктов на запрос
                                 collected_products.extend(products)
                             except Exception as e:
                                 logger.warning(f"[Gemini] Tool search_products failed in round {round_num+1}: {e}")
@@ -141,7 +144,7 @@ class GeminiClient:
             logger.info(f"[Gemini] Using fallback queries: {fallback_queries}")
             
             # Выполняем параллельно несколько поисков
-            search_tasks = [search_products(query=q, num=2) for q in fallback_queries[:3]]
+            search_tasks = [self.product_search_client.search_products(query=q, num=2) for q in fallback_queries[:3]]
             try:
                 fallback_results = await asyncio.gather(*search_tasks, return_exceptions=True)
                 for i, result in enumerate(fallback_results):

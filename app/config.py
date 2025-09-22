@@ -13,6 +13,9 @@ class Settings:
 	vllm_api_key: str = os.getenv("VLLM_API_KEY", "dev")
 	qwen_model: str = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 
+	# Product Search Service settings
+	product_search_base_url: str = os.getenv("PRODUCT_SEARCH_BASE_URL", "http://localhost:8001")
+
 	# Gemini API settings
 	gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
 	gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")

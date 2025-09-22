@@ -15,12 +15,13 @@ from app.utils.logging import get_logger
 from app.services.job_manager import job_manager, JobStatus
 
 from app.services.supabase_service import (
-    supabase_service, 
-    SkinAnalysisJobCreate, 
+    supabase_service,
+    SkinAnalysisJobCreate,
     SkinAnalysisJobUpdate,
     SkinAnalysisResult,
     RecommendedProduct
 )
+from app.services.product_search_client import ProductSearchClient
 
 app = FastAPI(title="Skin Analyze API", version="0.1.1")
 logger = get_logger("app")
