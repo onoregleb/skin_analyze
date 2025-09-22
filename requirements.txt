@@ -8,4 +8,5 @@ openai==1.107.0
 google-genai
 python-dotenv==1.1.1
 watchfiles==0.24.0
-supabase==2.18.1   
+supabase==2.18.1
+beautifulsoup4==4.12.3

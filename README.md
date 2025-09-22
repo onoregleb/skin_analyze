@@ -31,6 +31,25 @@ cp example.env .env
 # Отредактируйте .env файл с вашими ключами API
 ```
 
+### Настройка Google Custom Search для получения цен
+
+Для получения цен продуктов рекомендуется настроить Custom Search Engine следующим образом:
+
+1. **Создайте Custom Search Engine:**
+   - Перейдите в [Google Custom Search](https://cse.google.com/)
+   - Создайте новый поисковик
+   - Добавьте сайты: `ulta.com`, `sephora.com`, `amazon.com`, `nordstrom.com`
+
+2. **Настройте Google Shopping:**
+   - В настройках CSE выберите "Search the entire web"
+   - Включите Google Shopping результаты
+   - Укажите "skincare", "beauty", "cosmetics" как ключевые слова
+
+3. **Активируйте Custom Search API:**
+   - В [Google Cloud Console](https://console.cloud.google.com/) включите Custom Search API
+   - Создайте API ключи
+   - Включите billing для API
+
 ### Запуск сервисов
 
 ```bash

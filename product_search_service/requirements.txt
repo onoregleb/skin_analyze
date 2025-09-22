@@ -4,3 +4,4 @@ pydantic==2.11.7
 httpx==0.28.1
 python-dotenv==1.1.1
 watchfiles==0.24.0
+beautifulsoup4==4.12.3

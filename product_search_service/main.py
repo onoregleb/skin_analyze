@@ -20,6 +20,10 @@ class ProductResponse(BaseModel):
     url: str
     snippet: str
     image_url: str | None
+    price: str | None = None
+    brand: str | None = None
+    category: str | None = None
+    rating: float | None = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,7 +77,11 @@ async def search_products_endpoint(request: ProductSearchRequest):
                 name=result.get("name", "Unknown Product"),
                 url=result.get("url", ""),
                 snippet=result.get("snippet", ""),
-                image_url=result.get("image_url")
+                image_url=result.get("image_url"),
+                price=result.get("price"),
+                brand=result.get("brand"),
+                category=result.get("category"),
+                rating=result.get("rating")
             ))
 
         return products
