@@ -14,7 +14,7 @@ class Settings:
 	qwen_model: str = os.getenv("QWEN_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 
 	# Product Search Service settings
-	product_search_base_url: str = os.getenv("PRODUCT_SEARCH_BASE_URL", "http://localhost:8001")
+	product_search_base_url: str = os.getenv("PRODUCT_SEARCH_BASE_URL", "http://product_search:8001")
 
 	# Gemini API settings
 	gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
