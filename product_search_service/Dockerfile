@@ -7,9 +7,6 @@ RUN apt-get update && \
         python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
 
-# ---------- обновляем pip и устанавливаем пакеты ----------
-RUN python3 -m pip install --upgrade --no-cache-dir pip setuptools wheel
-
 # ---------- создаем юзера ----------
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /app && \
@@ -18,9 +15,15 @@ RUN useradd -m -u 1000 appuser && \
 USER appuser
 WORKDIR /app
 
+# ---------- обновляем pip и устанавливаем пакеты ----------
+RUN python3 -m pip install --user --upgrade --no-cache-dir pip setuptools wheel
+
 # ---------- зависимости ----------
 COPY --chown=appuser:appuser requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# ---------- добавляем пользовательский bin в PATH ----------
+ENV PATH="/home/appuser/.local/bin:${PATH}"
 
 # ---------- код ----------
 COPY --chown=appuser:appuser . .
