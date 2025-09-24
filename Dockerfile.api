@@ -16,18 +16,7 @@ RUN python3 -m pip install --upgrade --no-cache-dir pip setuptools wheel
 # Install CUDA-enabled PyTorch (cu121) for GPU acceleration
 RUN pip install --no-cache-dir torch torchvision torchaudio
 
-# Install remaining Python dependencies
-RUN pip install --no-cache-dir \
-        transformers \
-        xformers \
-        accelerate \
-        safetensors \
-        fastapi \
-        uvicorn \
-        pydantic \
-        hf_transfer
-
-# ---------- ТОЛЬКО ПОСЛЕ ЭТОГО создаем юзера ----------
+# ---------- создаем юзера ----------
 ENV HF_HOME=/hf_cache
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /app ${HF_HOME} && \
@@ -36,9 +25,29 @@ RUN useradd -m -u 1000 appuser && \
 USER appuser
 WORKDIR /app
 
+# ---------- обновляем pip и устанавливаем базовые пакеты ----------
+RUN python3 -m pip install --user --upgrade --no-cache-dir pip setuptools wheel
+
+# Install CUDA-enabled PyTorch (cu121) for GPU acceleration
+RUN pip install --user --no-cache-dir torch torchvision torchaudio
+
+# Install remaining Python dependencies
+RUN pip install --user --no-cache-dir \
+        transformers \
+        xformers \
+        accelerate \
+        safetensors \
+        fastapi \
+        uvicorn[standard] \
+        pydantic \
+        hf_transfer
+
 # ---------- остальные зависимости ----------
 COPY --chown=appuser:appuser requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# ---------- добавляем пользовательский bin в PATH ----------
+ENV PATH="/home/appuser/.local/bin:${PATH}"
 
 # ---------- код ----------
 COPY --chown=appuser:appuser . .
